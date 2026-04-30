@@ -13,9 +13,9 @@
 ORDERING NOTE
   Items are listed in *recommended execution order* (chronological priority),
   NOT v5 phase number. Phase 0 EDA happens in PARALLEL with the train image
-  download. Phase 1 SSL pretraining can also run in parallel with Phase 2
-  baselines once accounts are set up. Where parallelism is possible it's
-  flagged with [PARALLEL].
+  download. Phase 1 (BioCLIP2 backbone setup) is a quick local step that
+  doesn't need a GPU -- it slots in before Phase 2 with no parallelism
+  needed. Where parallelism is possible it's flagged with [PARALLEL].
 
 LEGEND
   [x] done       [~] in progress    [ ] todo    [?] verify    [!] blocker
@@ -166,11 +166,12 @@ B.0.5 KAGGLE DISCUSSION POST: external models declaration             [ ] 15 min
      pretrained model used must be declared on the Discussion board
      before uploading results that use it.
      Title: "External pretrained models -- [your team name]"
-     Initial body lists at least:
-       - YOLOv11 (Ultralytics, AGPL-3.0) pretrained on COCO
-       - BioClip2 (imageomics/bioclip-2, MIT) pretrained on TreeOfLife-10M
-       - DINOv2 (Meta, Apache 2.0) pretrained on LVD-142M  [if we use it]
-     Reply to your own post every time you add a new model in Phase 1+.
+     Initial body (locked Apr 30, both models will be used):
+       - YOLOv11 (Ultralytics, AGPL-3.0) pretrained on MS-COCO
+       - BioCLIP2 (imageomics/bioclip-2, MIT) pretrained on TreeOfLife-10M
+         (curated biology dataset including iNaturalist + museum specimens)
+     Reply to your own post if you add any other model later (e.g. RT-DETR
+     pretrained checkpoints in Phase 6, SAM for any segmentation experiment).
      If post is missed: any submission that uses an undeclared model
      risks disqualification.
 
@@ -300,12 +301,14 @@ C.4  SUBMIT FIRST CSV TO KAGGLE                                      [!] critica
      NOTE: Kaggle competition phase usually limits 5 submissions/day --
      budget them.
 
-C.5  EXP 2.3 - BACKBONE BAKE-OFF                                     [ ] 1.5 hr
-     Same training, three different starting weights:
+C.5  EXP 2.3 - BACKBONE BAKE-OFF (REDUCED to 2-way)                  [ ] 1 hr
+     Same training, two different starting weights (down from 3 since
+     Path 3 SSL was removed in Block D decision-lock):
        (a) ImageNet (Ultralytics default)
-       (b) BioClip2 (HuggingFace: imageomics/bioclip-2)  [free, no Phase 1 needed]
-       (c) Phase 1 SSL backbone (only if you ran Phase 1 in parallel)
-     Decision rule: v5 lines 501-508. Pick the winner -> use for ALL later phases.
+       (b) BioCLIP2 (HuggingFace: imageomics/bioclip-2, MIT license)
+     Expected: BioCLIP2 wins by +2 to +5 mAP. If ImageNet wins, double-check
+     the BioCLIP2 adapter from Block D for a wiring bug before accepting
+     the result. Pick the winner -> use for ALL later phases.
 
 C.6  COMMIT BASELINE WEIGHTS + LB SCORE                              [ ] 5 min
      Add notes/phase2_baseline.md with: val mAP, LB mAP, winning backbone,
@@ -313,41 +316,58 @@ C.6  COMMIT BASELINE WEIGHTS + LB SCORE                              [ ] 5 min
      they're too big; save to a separate weights/ folder, gitignored).
 
 ================================================================================
-  BLOCK D  -  Apr 30 - May 2 (Days 3-5)  [PARALLEL]  ·  Phase 1 SSL pretraining
+  BLOCK D  -  Apr 30 (~1-2 hr)  ·  Phase 1 backbone setup (LOCKED: BIOCLIP2)
 ================================================================================
 
-  Reference: v5 plan lines 420-477.  Hardware: RunPod A100 80GB (~$45).
-  PARALLELISM: Phase 1 doesn't BLOCK Phase 2 unless you specifically want
-  the SSL backbone in the bake-off. Skip-rule: if behind on time, use
-  BioClip2 (free) and skip this entire block -> save $45.
+  Reference: v5 plan "Phase 1 -- Backbone Pretraining" section.
+  Hardware: NONE -- this runs on local CPU/laptop GPU. No RunPod rental.
+  Cost: $0. Time: ~1-2 hours.
 
-D.1  PHASE 1 INCLUDE/SKIP DECISION                                   [ ] 5 min
-     v5 lines 442-451. With ~9 days left and ~$200-300 budget:
-       Recommended: SKIP full SSL, USE BIOCLIP2 BACKBONE (free, +0.5-1.5 mAP).
-                    Saves $45 and 2 days. Bake-off in C.5 still confirms it wins.
-     If you want to do it anyway, see D.2-D.7 below.
+  DECISION LOG (Apr 30): Path 3 (SimCLR/DINOv2 SSL pretraining) was REMOVED
+  from the active plan. Compressed 8-day timeline doesn't justify a 24-hr
+  GPU run for an uncertain +1-2 mAP delta when BioCLIP2 gives most of the
+  benefit for free. Decision tree preserved in v5 plan for reference.
 
-D.2  DEPLOY RUNPOD A100 80GB pod                                     [ ] 10 min
-     See docs/runpod_setup.txt Part B + C (Phase 1 row).
-     Cloud type: Community. Persistent volume: 80 GB at /workspace.
+  ~$30 of RunPod budget that would have gone to Path 3 is reallocated to
+  Phase 7 ablation experiments (extra WBF model in ensemble, more SAHI
+  configs, etc.) -- see Block J cost re-budget.
 
-D.3  RSYNC DATA + CODE TO POD                                        [ ] 15 min
-     From local PowerShell, after pod is running:
-       scp -P <port> -i ~/.ssh/runpod_ed25519 -r data/raw root@<ip>:/workspace/data/raw
-     ~25 GB upload, plan ~1 hr depending on home bandwidth.
+D.1  DOWNLOAD BIOCLIP2 WEIGHTS FROM HUGGING FACE                     [ ] 15 min
+     huggingface-cli download imageomics/bioclip-2 --local-dir weights/bioclip2
+     Size: ~1.5 GB. Public model -- HF token NOT required, but having one
+     avoids anonymous rate limits (see A.5.5 if you want one).
+     Verify: ls weights/bioclip2/  ->  should show config.json + model.safetensors
 
-D.4  RUN SimCLR PRETRAINING (~10 hr, ~$25)                           [ ] 10 hr
-     v5 lines 453-468. Batch size >=512 on A100 80GB.
+D.2  WRITE BACKBONE ADAPTER                                          [ ] 45 min
+     Create src/bioclip2_backbone.py (~30 lines):
+       - Load BioCLIP2 vision tower (open_clip-style)
+       - Project its feature dim to YOLOv11 backbone's expected channels
+       - Wrap in nn.Module so YOLOv11 can swap it in via the model YAML
+     Reference: BioCLIP2 model card on HF + Ultralytics custom backbone docs.
 
-D.5  (OPTIONAL) DINOv2 FINE-TUNE (~8 hr more, ~$20)                  [ ] optional
-     Only if D.4 looked great AND budget allows.
+D.3  WRITE configs/yolov11_bioclip2.yaml                             [ ] 15 min
+     Copy Ultralytics' yolov11s.yaml, replace the backbone block with a
+     reference to src/bioclip2_backbone.py:BioCLIP2Backbone.
+     Keep YOLOv11's neck + head unchanged (BioCLIP2 only replaces the
+     "what does this image look like" half).
 
-D.6  SAVE BACKBONE WEIGHTS                                           [ ] 1 min
-     /workspace/weights/phase1_simclr.pt
-     scp back to local, commit metadata (NOT weights) to git.
+D.4  SMOKE-TEST FORWARD PASS                                         [ ] 15 min
+     python -c "from ultralytics import YOLO; m=YOLO('configs/yolov11_bioclip2.yaml');
+                import torch; out=m(torch.randn(1,3,640,640)); print(out[0].shape)"
+     Expected: prints a tensor shape, no errors. Confirms backbone wires
+     into YOLOv11 cleanly. NO TRAINING YET -- just structural check.
 
-D.7  STOP THE POD                                                    [ ] 30 sec
-     RunPod -> Pods -> Stop (NOT Terminate -- keep the volume).
+D.5  COMMIT THE ADAPTER + CONFIG                                     [ ] 1 min
+     git add src/bioclip2_backbone.py configs/yolov11_bioclip2.yaml
+     git commit -m "Phase 1: BioCLIP2 backbone adapter + YOLOv11 config"
+     git push
+     Do NOT commit weights/bioclip2/ (it's in .gitignore via weights/).
+
+(BLOCK D PATH 3 ITEMS REMOVED: D.2-D.7 from v4 of this checklist had
+ RunPod A100 deployment, SimCLR training, DINOv2 fine-tune. All skipped
+ per the locked decision above. If timeline opens up after May 4,
+ consider re-introducing as a Phase 7 stretch goal -- but plan defaults
+ to "skip permanently".)
 
 ================================================================================
   BLOCK E  -  May 2-3 (Days 5-6)  ·  Phase 3 PU + class imbalance

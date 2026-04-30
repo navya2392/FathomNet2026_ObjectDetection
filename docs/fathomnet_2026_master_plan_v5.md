@@ -24,6 +24,13 @@
 - **Working notes paper deadlines confirmed** (May 28 submission, June 30 notification, July 6 camera-ready, CLEF Sept 21–24 in Jena). Added to timeline.
 - **Test set is fully annotated on the evaluator's side** ("1,425 fully annotated images" per the official overview). FLAG 5 still holds for our LOCAL `dataset_test.json` which contains zero annotations by design — that's the participant-facing data, not what the evaluator sees.
 
+**Changelog from v5.2 → v5.3 (Phase 1 decision lock, April 30, 2026):**
+- **Phase 1 path locked: BioCLIP2 backbone.** SimCLR/DINOv2 SSL pretraining (the original Path 3) is removed from the active plan. With 8 days remaining, a 24-hour GPU run for an uncertain +1-2 mAP delta is a bad trade. BioCLIP2 captures +2 to +5 mAP at $0 cost.
+- **Phase 1 timeline collapsed from 2-3 days to ~1-2 hours.** The Block D items in the master checklist now describe HuggingFace download, backbone-adapter writing, and a smoke test — no GPU rental.
+- **~$30 RunPod budget reallocated** from Phase 1 SSL training to Phase 7 ablation experiments (extra ensemble model, more SAHI/calibration configs).
+- **Phase 2 backbone bake-off (C.5) reduced from 3-way to 2-way** (ImageNet vs BioCLIP2) since the SSL backbone option no longer exists.
+- Path 3 (SSL pretraining) decision tree retained in the Phase 1 section as a stretch goal IF Phase 2-6 wrap by May 4 with budget remaining.
+
 **Changelog from v5.1 → v5.2 (after reading official rules, April 29, 2026):**
 - **NEW FLAG 9 added:** Winner license is **Open Source (OSI-approved)**. Every pretrained model and dependency we use must either (a) have an OSI-compatible license, or (b) be flagged as an "incompatible-license carve-out" in the writeup. BioClip2/DINOv2/Ultralytics licenses must be confirmed before use.
 - **Submission cap codified:** 10 submissions/day, 2 final selections at deadline. Strengthens the case for offline scoring (B.5 `local_score`) — Kaggle slots are precious and must be reserved for genuine leaderboard probes.
@@ -584,54 +591,42 @@ fathomnet-2026/
 
 ---
 
-## Phase 1 — Self-Supervised Pretraining
+## Phase 1 — Backbone Pretraining (LOCKED: BioCLIP2)
 
-**Days 3–5 · RunPod A100 80GB · ~18 hours · ~$45**
+**~1-2 hours · $0 · no GPU rental needed**
+
+### DECISION (locked Apr 30, 2026): BioCLIP2 backbone
+
+Given the compressed 8-day timeline, **Path 2 (BioCLIP2) is the chosen approach**. SSL pretraining on the FathomNet DB (Path 3) is removed from the active plan. The decision tree below is preserved for future reference but is no longer a live decision.
+
+**Why locked:** BioCLIP2 captures most of the benefit of SSL pretraining (+2 to +5 mAP over ImageNet on biological detection tasks) at zero compute cost. It was pretrained on TreeOfLife-10M which already includes substantial marine imagery from iNaturalist and museum collections. Path 3 might add another +1-2 mAP but requires ~24 hrs of GPU time and ~$30 of RunPod credit — that's 12.5% of our remaining time budget for an uncertain marginal gain. Bad trade under compression.
 
 ### Goal
 
-Pretrain a backbone on the 400k+ unlabeled FathomNet images so the detector in Phase 2+ starts from features already tuned to underwater imagery, rather than ImageNet features that learned about dogs and cars.
+Replace YOLOv11's default ImageNet-pretrained backbone with BioCLIP2's vision encoder so the detector starts from features already tuned to biological taxonomy and marine imagery.
 
-### Design rationale
+### What BioCLIP2 is (in one paragraph)
 
-Competition training set is only 6,463 images. Most competitors fine-tune from ImageNet weights, so their backbone hasn't seen underwater imagery. Self-supervised pretraining on the full FathomNet database — which needs no labels — gives you a backbone that already understands marine visual patterns (color shifts with depth, backscatter, marine organism textures) before you ever show it a label.
+CLIP architecture (vision transformer + text encoder trained jointly), but pretrained on the **TreeOfLife-10M** dataset — ~10 million biology specimen images from museums, citizen-science apps (iNaturalist), and academic databases, each labeled with full Linnaean taxonomy (kingdom → species). Weights distributed via HuggingFace as `imageomics/bioclip-2` under MIT license. Compared to a generic ImageNet backbone, BioCLIP2 already understands biological morphology — fish body shapes, echinoderm symmetry, the difference between a sponge and a coral.
 
-### Architecture decision: three paths
+### What we actually do in this phase (~1-2 hours total)
 
-| Path | Effort | Cost | Expected benefit |
-|---|---|---|---|
-| **BioClip2 backbone** | 0 hrs | $0 | +0.5–1.5 mAP over ImageNet |
-| **SimCLR on FathomNet DB** | ~10 hrs | ~$25 | +1–2 mAP over ImageNet |
-| **SimCLR + DINOv2 fine-tune** | ~18 hrs | ~$45 | +1.5–3 mAP over ImageNet |
+1. `huggingface-cli download imageomics/bioclip-2 --local-dir weights/bioclip2`
+2. Write a small adapter (~30 lines) that loads the BioCLIP2 ViT into YOLOv11's backbone slot, keeping YOLOv11's neck and detection head intact
+3. Smoke-test on a single image: confirm forward-pass produces sensible features
+4. Save as `configs/yolov11_bioclip2.yaml` for use in Phase 2
 
-BioClip2 is already pretrained on FathomNet data. It's the free shortcut. Full SSL pretraining on the raw DB is slightly better but requires GPU time. DINOv2 fine-tuning pushes it further with modern representation learning.
+### Original three-path table (preserved for reference)
 
-### Include / skip decision
+| Path | Effort | Cost | Expected benefit | Status |
+|---|---|---|---|---|
+| Path 1: ImageNet pretrained YOLOv11 (default) | 0 hrs | $0 | Baseline | Baseline only |
+| **Path 2: BioCLIP2 backbone** | **~1-2 hrs** | **$0** | **+2 to +5 mAP** | **CHOSEN** |
+| Path 3: SimCLR / DINOv2 SSL on FathomNet DB | ~24 hrs | ~$30 | +3 to +6 mAP, uncertain | Skipped (compressed timeline) |
 
-```
-IF time_budget_remaining_after_setup >= 3 days AND gpu_budget >= $40:
-    DO full SSL pretraining (SimCLR or SimCLR + DINOv2)
-ELIF time_budget_remaining >= 1 day:
-    DO SimCLR only (skip DINOv2)
-ELSE:
-    SKIP — use BioClip2 backbone from Hugging Face
-```
+### If timeline opens up (e.g., finished early)
 
-### Key design choices within SimCLR
-
-- **Augmentation strength:** Stronger than standard because underwater images need more color variation to learn invariance to depth-dependent color shifts
-- **Batch size:** 512+ on A100 80GB. Contrastive learning's quality scales with number of negative pairs per batch
-- **Temperature:** 0.07 (standard SimCLR value)
-- **Epochs:** 100 is typical; 50 is acceptable if time-constrained
-
-### Light code reference
-
-```python
-# Core contrastive loss pattern (NT-Xent)
-# z1, z2 are normalized projections of two augmented views
-loss = -log(exp(sim(z1, z2) / T) / sum_k(exp(sim(z1, z_k) / T)))
-# T = temperature; sum over all negatives in batch
-```
+Path 3 is the natural extension. The ~$30 saved here goes into the Phase 7 ablation budget by default, but if Phase 2-6 wrap by May 4 with budget remaining, consider running SimCLR on a single fold's training data (not the full FathomNet DB) as a Phase 7 stretch experiment.
 
 ### Success signal
 
