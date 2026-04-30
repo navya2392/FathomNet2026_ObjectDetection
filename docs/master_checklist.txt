@@ -74,13 +74,19 @@ A.6  COPY .env.example -> .env                                       [x] done
        RUNPOD_POD_ID=
        DATA_DIR=data, RAW_DATA_DIR=data/raw, PROCESSED_DATA_DIR=data/processed
 
-A.7  GIT REPO INIT + GITHUB PRIVATE PUSH                             [ ] 10 min
-     Strongly recommended before renting RunPod -- you'll `git clone` onto
-     each pod. See docs/account_setup.txt section 7. Keep PRIVATE during
-     the contest; rules forbid sharing during the competition.
+A.7  GIT REPO INIT + GITHUB PRIVATE PUSH                             [x] done
+     Apr 30 00:09 PT: pushed to https://github.com/navya2392/fathomnet-2026
+     PRIVATE repo, AGPL-3.0 licensed, 33 files, 2 commits:
+       448f752  Initial commit: FathomNet 2026 project setup
+       e22e523  Lock in BioCLIP2 backbone (v5.3); update dates
+     Pre-push wiped local history (had real keys in commit 288b742) and
+     re-init'd on main branch. Verified zero secrets in git history.
+     `git push` from any RunPod pod / new machine: just clone via SSH
+     or HTTPS, the credentials manager will prompt once on first push.
 
-A.8  CURSOR REMOTE-SSH EXTENSION INSTALLED                           [ ] 2 min
-     See docs/account_setup.txt section 6.
+A.8  CURSOR REMOTE-SSH EXTENSION INSTALLED                           [x] done
+     User confirmed Apr 30 00:00 PT: extension already installed.
+     No further action until A.9 RunPod pod is live.
 
 A.9  RUNPOD ACCOUNT + $100 INITIAL CREDIT + SSH KEY UPLOADED         [ ] 15 min
      See docs/runpod_setup.txt Part A (5 substeps).
@@ -155,8 +161,10 @@ A.15 ADD .gitignore ENTRIES FOR DATA                                  [x] done
 
 ================================================================================
   BLOCK B  -  Apr 29 (TONIGHT) -> Apr 30 (TOMORROW)  ·  finish data + Phase 0
-  STATUS as of Apr 29 EOD: 3/11 done (B.1, B.1.5, B.2).
-  Remaining: B.0.5, B.2.5, B.3, B.4, B.5, B.5.5, B.6, B.7.
+  STATUS as of Apr 30 00:14 PT: 5/11 done (B.1, B.1.5, B.2, B.3, B.4).
+  Remaining: B.0.5, B.2.5, B.5, B.5.5, B.6, B.7.
+  Overnight build (Apr 30 00:14+ PT): B.5, B.5.5, B.6, B.7 will be
+  drafted in background by the assistant. User reviews + commits in AM.
   (B.0.5 + B.2.5 are HARD GATES before any submission.)
 ================================================================================
 
@@ -203,22 +211,21 @@ B.2.5 UPLOAD DATA AS KAGGLE PRIVATE DATASET                           [ ] 30 min
      If accidentally made Public/Unlisted: delete immediately and
      redo. Notify Kaggle if any download by a non-participant occurred.
 
-B.3  RUN notebooks/phase0_eda.ipynb END-TO-END                       [ ] 15 min
-     Open in Cursor or Jupyter. Kernel: "Python (fathomnet-2026)".
-     Run All. Confirms every Phase 0 artifact is produced:
-       configs/cat_id_mapping.py        (FLAG 1: non-contiguous IDs)
+B.3  RUN notebooks/phase0_eda.ipynb END-TO-END                       [x] done
+     User confirmed Apr 30 00:13 PT: notebook ran end-to-end.
+     Verified-on-disk Phase 0 outputs:
+       configs/cat_id_mapping.py        (FLAG 1: non-contiguous IDs, 32 IDs)
        configs/fathomnet.yaml
-       configs/taxonomy.py              (Phase 5 dependency)
-       data/class_counts.json
-       data/rfs_repeat_factors.pkl
-       data/cv_folds.pkl
-       notes/phase0_decisions.md
+       configs/taxonomy.py              (Phase 5 dependency stub)
+       data/class_counts.json           (per-class instance counts)
+       data/rfs_repeat_factors.pkl      (RFS factors at t=0.005)
+       data/cv_folds.pkl                (5-fold stratified, fold[0] val=1293)
+       notes/phase0_decisions.md        (EFL/RFS/SAHI all decided YES)
 
-B.4  COMMIT PHASE 0 ARTIFACTS                                        [ ] 1 min
-     git add configs/ data/class_counts.json data/rfs_repeat_factors.pkl
-             data/cv_folds.pkl notes/phase0_decisions.md notebooks/
-     git commit -m "Phase 0 EDA artifacts"
-     git push
+B.4  COMMIT PHASE 0 ARTIFACTS                                        [x] done
+     Apr 30 00:09 PT: bundled into "Initial commit" (448f752). All
+     configs/, data/*.pkl, data/class_counts.json, notes/, notebooks/
+     pushed to origin/main on github.com/navya2392/fathomnet-2026.
 
 B.5  WRITE src/submit.py HELPER (OWNS cat_id REVERSE MAPPING)        [ ] 1.5 hr
      This is NOT explicit in v5 but addresses Failure Mode #1
@@ -680,27 +687,28 @@ From official competition rules (added Apr 29, 2026):
       Apache/BSD/AGPL needs a deliberate decision and writeup disclosure.
 
 ================================================================================
-  TIME-CRITICAL ITEMS  (snapshot as of Apr 29 EOD)
+  TIME-CRITICAL ITEMS  (snapshot as of Apr 30 00:14 PT)
 ================================================================================
 
-  Done today (Apr 29):
-    A.5, A.6, A.10, A.11, A.12, A.13, A.14, A.15  (Block A: 12/15)
-    B.1, B.1.5, B.2                                (Block B: 3/11)
+  Done today (Apr 29 -> early Apr 30):
+    A.5, A.6, A.7, A.8, A.10, A.11, A.12, A.13, A.14, A.15  (Block A: 14/15)
+    B.1, B.1.5, B.2, B.3, B.4                                (Block B: 5/11)
 
   Already done before today:
     A.1, A.2, A.3, A.4
 
-  Next 5 must-do items for Apr 30 (in order):
+  Next 3 must-do items for Apr 30 (in order, after morning routine):
 
-  1. A.7   Git init + private GitHub push          (~10 min)
-  2. A.8   Cursor Remote-SSH extension install     (~2 min)
-  3. B.3   Run phase0_eda.ipynb end-to-end         (~15 min)
-  4. B.4   Commit Phase 0 artifacts (after B.3)    (~1 min)
-  5. A.9   RunPod account + $100 credit            (~15 min, do morning of Apr 30)
+  1. A.9   RunPod account + $100 credit            (~15 min)
+  2. Review overnight build (B.5/B.5.5/B.6/B.7 drafts) and commit
+                                                    (~30 min)
+  3. D.1   Download BioCLIP2 weights from HuggingFace (~15 min)
 
   Rules-critical gates (don't skip even if "later"):
    - B.0.5  Discussion-board declaration of pretrained models
             (HARD GATE before first Kaggle submission in Block C)
+   - B.2.5  Upload data as Kaggle PRIVATE Dataset
+            (only if you'll use Kaggle notebooks for free T4 baseline runs)
    - B.2.5  Upload data as Kaggle PRIVATE Dataset (NOT Public/Unlisted)
 
   If you do these, the rest of the plan can proceed without blockers.
