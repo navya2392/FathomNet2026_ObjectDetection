@@ -1,0 +1,224 @@
+================================================================================
+  ACCOUNT & TOOLING CHECKLIST   ·   FathomNet 2026
+  Source of truth: docs/fathomnet_2026_master_plan_v5.md
+                   "Do This First" section (lines 90-100)
+================================================================================
+
+This is everything OTHER than RunPod. RunPod has its own file:
+    docs/runpod_setup.txt
+
+Status legend:   [x] = done    [ ] = todo    [?] = verify
+
+================================================================================
+  1.  CLEF LAB REGISTRATION       *** TIME-CRITICAL ***
+================================================================================
+
+  Status:   [?]  CHECK NOW. Deadline was April 23, 2026 per v5 plan.
+                 Today is April 28, 2026 -- THIS MAY ALREADY BE LATE.
+                 If late, email the lab organizers TODAY and ask for a
+                 late-registration exception. Many CLEF labs grant them.
+
+  URL:      https://clef-labs-registration.dipintra.it/registrationForm.php
+  Cost:     Free
+  Why:      Without CLEF lab registration you do not appear on the official
+            ranking, even if your Kaggle score would place you top-N.
+            Kaggle leaderboard != CLEF official ranking.
+
+  Action:   1. Open the URL above.
+            2. Fill out the lab registration form.
+               Select track: FathomNet 2026 (under FGVC13 / CVPR).
+            3. Save the confirmation email.
+            4. If the form is closed: email the FGVC organizers with subject
+               "Late CLEF registration request - FathomNet 2026" and explain
+               you missed the deadline by a few days. Be polite, brief, ask
+               whether late entry is possible.
+
+================================================================================
+  2.  KAGGLE COMPETITION ENROLLMENT
+================================================================================
+
+  Status:   [?]  Verify you are joined and have accepted the rules.
+                 Without rules acceptance you cannot submit.
+
+  URL:      https://www.kaggle.com/competitions/fathomnet-2026
+  Cost:     Free
+
+  Action:   1. Visit the URL, click "Join Competition".
+            2. Click "Rules" tab -> scroll to bottom -> "I Understand and Accept".
+            3. Verify you can see the "Submit Predictions" button on the
+               competition page (greyed out is fine -- it just needs to exist).
+
+================================================================================
+  3.  KAGGLE API TOKEN          [x]  ALREADY DONE   (April 2026)
+================================================================================
+
+  Status:   [x]  Persisted as a Windows User env var:  KAGGLE_API_TOKEN
+
+  How it was set:
+            [Environment]::SetEnvironmentVariable(
+              "KAGGLE_API_TOKEN", "KGAT_<your_token>", "User"
+            )
+
+  Verify:   .\venv\Scripts\kaggle.exe competitions files fathomnet-2026
+            Should list dataset_train.json, dataset_test.json, etc.
+
+  Rotate:   If you ever paste the token into a chat, screenshot, or commit it,
+            go to https://www.kaggle.com/settings -> "Create New Token" and
+            re-run the SetEnvironmentVariable command above with the new value,
+            then RESTART your terminal so the new value loads.
+
+================================================================================
+  4.  WEIGHTS & BIASES (W&B)        [ ]  TODO
+================================================================================
+
+  Status:   [ ]  Required from Phase 1 onwards. Free tier is enough.
+
+  URL:      https://wandb.ai/site
+  Cost:     Free (academic / personal use)
+  Why:      Experiment tracking. Every Phase 3+ run logs metrics, configs,
+            sample predictions, and final mAP here. Survives pod death and
+            lets you compare ablations side-by-side. The plan v5 budget
+            assumes you have this.
+
+  Action:   1. Sign up at https://wandb.ai/site -- use your academic email
+               for the higher free quota.
+            2. Create a new "Team" or use your personal entity.
+               Recommended team name: <your-username>-fathomnet  (or just
+               leave it as your default user entity).
+            3. Get your API key:  https://wandb.ai/authorize
+               Copy it (looks like a 40-char hex string).
+            4. Set it as a Windows User env var (same pattern as Kaggle):
+
+                 [Environment]::SetEnvironmentVariable(
+                   "WANDB_API_KEY", "<paste_40_char_key>", "User"
+                 )
+
+            5. Also fill in the .env file (copy .env.example -> .env first):
+                 WANDB_API_KEY=<paste_40_char_key>
+                 WANDB_PROJECT=fathomnet-2026
+                 WANDB_ENTITY=<your_username_or_team>
+
+            6. Restart the Cursor terminal so env vars reload.
+
+  Verify:   .\venv\Scripts\python.exe -c "import wandb; wandb.login(); print('ok')"
+
+================================================================================
+  5.  HUGGING FACE HUB           [ ]  OPTIONAL (only if using BioClip2)
+================================================================================
+
+  Status:   [ ]  Required only if you take the "BioClip2 backbone" shortcut
+                 in Phase 1 (the $0 SSL alternative). BioClip2 is a public
+                 model so technically a token is not strictly required, BUT
+                 having one avoids anonymous-rate-limit issues during the
+                 model download from a RunPod pod.
+
+  URL:      https://huggingface.co
+  Cost:     Free
+
+  Action:   1. Sign up at https://huggingface.co/join
+            2. Verify your email.
+            3. Get a READ token at https://huggingface.co/settings/tokens
+                 -> New token -> Type: "Read" -> Name: "fathomnet-2026"
+                 -> Generate -> copy.
+            4. Set as Windows env var:
+
+                 [Environment]::SetEnvironmentVariable(
+                   "HUGGINGFACE_HUB_TOKEN", "hf_<paste>", "User"
+                 )
+
+            5. Add to .env as well:
+                 HUGGINGFACE_HUB_TOKEN=hf_<paste>
+
+  Verify:   .\venv\Scripts\python.exe -c "from huggingface_hub import whoami; print(whoami())"
+
+================================================================================
+  6.  CURSOR + REMOTE-SSH EXTENSION         [ ]  TODO
+================================================================================
+
+  Status:   [ ]  Need this to develop on RunPod pods from Phase 1 onwards.
+
+  Action:   1. Open Cursor.
+            2. Extensions panel (Ctrl+Shift+X).
+            3. Search: "Remote - SSH"  (the Microsoft-published one).
+            4. Click Install.
+            5. After install, a green ">< " icon appears bottom-left of Cursor.
+            6. The actual SSH key generation + RunPod key upload is covered
+               in docs/runpod_setup.txt Part A (steps A3-A4).
+
+================================================================================
+  7.  GIT + GITHUB (recommended, not strictly required)
+================================================================================
+
+  Status:   [?]  Project is currently NOT a git repo (per Cursor's user_info).
+                 Strongly recommend initializing one:
+                   - so you can git clone it onto each RunPod pod
+                   - so changes are versioned across local <-> remote
+                   - so you have a rollback if you break something
+
+  Action (if you want this):
+            1. Create a private repo at https://github.com/new
+               Suggested name: fathomnet-2026
+               Visibility: PRIVATE  (competition rules forbid sharing during
+                                     the contest; make public AFTER deadline)
+            2. In the project root:
+
+                 cd C:\Users\navya\OneDrive\Documentos\projects\fathomnet-2026
+                 git init
+                 git add .
+                 git commit -m "Initial commit: Phase 0 setup"
+                 git branch -M main
+                 git remote add origin https://github.com/<you>/fathomnet-2026.git
+                 git push -u origin main
+
+            3. The .gitignore is already set up to exclude data/, venv/,
+               .env, and weights -- so nothing sensitive or huge gets pushed.
+
+================================================================================
+  8.  CVPR 2026 WORKSHOP REGISTRATION    (optional, only if top-N)
+================================================================================
+
+  Status:   [ ]  ONLY relevant if you place high enough to be invited to
+                 present at the FGVC13 @ CVPR 2026 workshop in Denver.
+
+  Note:     CVPR registration historically sells out 4-6 weeks before the
+            event. If you have any chance of being invited (top 10-ish),
+            register early to lock in a spot. You can usually get a refund
+            if you cancel.
+
+  URL:      https://cvpr.thecvf.com/
+
+================================================================================
+  ENVIRONMENT VARIABLES SUMMARY
+================================================================================
+
+  After completing the above, the following Windows User env vars should
+  exist (verify with:  Get-ChildItem Env: | Where-Object Name -match
+  'KAGGLE|WANDB|HUGGING' ):
+
+      KAGGLE_API_TOKEN          [x]  done
+      WANDB_API_KEY             [ ]  todo (step 4)
+      HUGGINGFACE_HUB_TOKEN     [ ]  todo if using BioClip2 (step 5)
+
+  AND the project-local .env file (copy from .env.example):
+
+      KAGGLE_API_TOKEN=...      (fallback for python-dotenv)
+      WANDB_API_KEY=...
+      WANDB_PROJECT=fathomnet-2026
+      WANDB_ENTITY=...
+      HUGGINGFACE_HUB_TOKEN=... (optional)
+      RUNPOD_SSH=               (filled per-pod once you start renting)
+      RUNPOD_POD_ID=
+
+================================================================================
+  PRIORITY ORDER FOR TODAY
+================================================================================
+
+  1. CLEF registration (#1)     -- TIME CRITICAL, may already be late
+  2. Kaggle rules acceptance (#2) -- 30 seconds, do it now
+  3. W&B account + API key (#4) -- needed before Phase 1
+  4. Cursor Remote-SSH (#6)     -- needed before any RunPod work
+  5. Git/GitHub (#7)            -- recommended but can defer
+  6. RunPod (separate file)     -- needed before Phase 1 / Phase 3
+  7. HuggingFace (#5)           -- can defer until Phase 1 starts
+  8. CVPR (#8)                  -- defer until you know you placed
+================================================================================

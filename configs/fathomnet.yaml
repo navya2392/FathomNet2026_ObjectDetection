@@ -1,0 +1,76 @@
+path: C:/Users/navya/OneDrive/Documentos/projects/fathomnet-2026/data/raw
+train: images/train
+val: images/train
+test: images/test
+nc: 32
+names:
+  0: amphipod
+  1: anemone
+  2: barnacle
+  3: benthic worm
+  4: bivalve
+  5: black coral
+  6: bony fish
+  7: brittle star
+  8: calycophoran siphonophore
+  9: chiton
+  10: crab
+  11: feather star
+  12: hydroid
+  13: isopod
+  14: jelly
+  15: larvacean
+  16: octopus
+  17: physonect siphonophore
+  18: pyrosome
+  19: sea cucumber
+  20: sea fan
+  21: sea pen
+  22: sea slug
+  23: sea snail
+  24: sea squirt
+  25: sea star
+  26: shrimp
+  27: soft coral
+  28: sponge
+  29: squat lobster
+  30: stony coral
+  31: urchin
+_phase0_meta:
+  note: This stub points at raw images. Per-fold txt lists will override 'train'/'val'
+    before Phase 2 baselines.
+  coco_cat_ids:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  - 10
+  - 11
+  - 13
+  - 15
+  - 17
+  - 19
+  - 20
+  - 22
+  - 24
+  - 25
+  - 26
+  - 27
+  - 28
+  - 29
+  - 30
+  - 32
+  - 33
+  - 35
+  - 36
+  - 37
+  - 38
+  - 40
+  - 41
+  imgsz_recommended: 640
+  rfs_threshold_t: 0.005

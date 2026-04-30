@@ -1,0 +1,46 @@
+# Large data - never commit (per Competition Rule 4: no redistribution)
+data/raw/
+data/processed/
+data/labels/
+data/folds/
+data/backup/
+
+# Model weights - too large for git, store on RunPod / GitHub Releases
+weights/
+*.pt
+*.pth
+*.onnx
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Credentials - never commit
+kaggle.json
+.env
+*.key
+
+# Weights & Biases local cache
+wandb/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Training runs (Ultralytics writes results here by default)
+runs/
+*.log
+
+# IDE configs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,687 @@
+================================================================================
+  MASTER CHECKLIST  ·  FathomNet 2026
+  Source plan: docs/fathomnet_2026_master_plan_v5.md  (1166 lines)
+  Companion files:
+    docs/account_setup.txt   - account / tooling setup details
+    docs/runpod_setup.txt    - RunPod rental + per-phase pod recipe
+
+  Last updated: 2026-04-29 (end of day)
+  Days to Kaggle deadline (May 7): 8
+  Days to working notes paper deadline (May 28): 29
+================================================================================
+
+ORDERING NOTE
+  Items are listed in *recommended execution order* (chronological priority),
+  NOT v5 phase number. Phase 0 EDA happens in PARALLEL with the train image
+  download. Phase 1 SSL pretraining can also run in parallel with Phase 2
+  baselines once accounts are set up. Where parallelism is possible it's
+  flagged with [PARALLEL].
+
+LEGEND
+  [x] done       [~] in progress    [ ] todo    [?] verify    [!] blocker
+
+================================================================================
+  BLOCK A  -  Apr 29 (TODAY) -> Apr 30 (TOMORROW)  ·  setup blockers
+  STATUS as of Apr 29 EOD: 12/15 done. Remaining: A.7, A.8, A.9.
+================================================================================
+
+A.1  ONEDRIVE SYNC DECISION                                          [x] done
+     Resolved 2026-04-28: OneDrive sync PAUSED for the project duration.
+     Note: account is Microsoft 365 (1 TB, 52.4 GB used / 5%) so quota is not
+     an issue -- the reason to keep paused is upload bandwidth, not space.
+     RE-PAUSE every 24 hours: tray icon -> gear -> Pause syncing -> 24 hours.
+     After May 7 (post-competition) you can optionally unpause to get a
+     free cloud backup of data\ -- ~25 GB will fit comfortably in your 1 TB.
+
+A.2  CLEF LAB REGISTRATION                                           [x] done
+     Confirmed registered (2026-04-28). Eligible for official CLEF ranking.
+
+A.3  KAGGLE COMPETITION ENROLLMENT + RULES ACCEPT                    [x] done
+     Rules accepted (2026-04-28). Submission button is unlocked.
+
+A.4  KAGGLE API TOKEN (already done)                                 [x] done
+
+A.5  WEIGHTS & BIASES (W&B) ACCOUNT + API KEY                        [x] done
+     Apr 29: account created, org=navya2392-usc-org, team=navya2392-usc,
+             project=fathomnet-2026. API key generated.
+     Use these in code/configs:
+       WANDB_ENTITY  = "navya2392-usc"      (the team, not personal user)
+       WANDB_PROJECT = "fathomnet-2026"
+     Auth + logging smoke-test (W&B official quickstart pattern):
+       1. Confirm install:  pip show wandb        # already in requirements.txt
+       2. Authenticate:     wandb login           # uses $env:WANDB_API_KEY
+       3. Run smoke test:   python scripts\wandb_smoke_test.py
+     Expected output: a run URL like
+       https://wandb.ai/navya2392-usc/fathomnet-2026/runs/<id>
+     Click it -- dashboard should show `acc` going up and `loss` going down
+     across 8 steps + a `config` panel with the 4 hyperparameters.
+     Delete the smoke-test run from the W&B UI when done.
+     Re-run scripts/wandb_smoke_test.py from RunPod/Kaggle to verify wandb
+     works there before kicking off a multi-hour training job.
+
+A.6  COPY .env.example -> .env                                       [x] done
+     Apr 29: .env created with real KAGGLE_API_TOKEN + WANDB_API_KEY +
+     WANDB_ENTITY=navya2392-usc + WANDB_PROJECT=fathomnet-2026.
+     .env.example sanitized to placeholders only -- safe to commit.
+     .gitignore already excludes .env (verified).
+     Schema:
+       KAGGLE_API_TOKEN=KGAT_<32hex>           (bearer-style Kaggle token)
+       WANDB_API_KEY=wandb_v1_<long>           (modern wandb key, ~86 chars)
+       WANDB_PROJECT=fathomnet-2026
+       WANDB_ENTITY=navya2392-usc
+       HUGGINGFACE_HUB_TOKEN=                  (optional, for HF gated models)
+       RUNPOD_SSH=                             (filled in when pod is live)
+       RUNPOD_POD_ID=
+       DATA_DIR=data, RAW_DATA_DIR=data/raw, PROCESSED_DATA_DIR=data/processed
+
+A.7  GIT REPO INIT + GITHUB PRIVATE PUSH                             [ ] 10 min
+     Strongly recommended before renting RunPod -- you'll `git clone` onto
+     each pod. See docs/account_setup.txt section 7. Keep PRIVATE during
+     the contest; rules forbid sharing during the competition.
+
+A.8  CURSOR REMOTE-SSH EXTENSION INSTALLED                           [ ] 2 min
+     See docs/account_setup.txt section 6.
+
+A.9  RUNPOD ACCOUNT + $100 INITIAL CREDIT + SSH KEY UPLOADED         [ ] 15 min
+     See docs/runpod_setup.txt Part A (5 substeps).
+     Don't deploy a pod yet -- first rental is Phase 3, ~5 days from now.
+
+A.10 SNAPSHOT RAW JSONs                                              [x] done
+     Apr 29: data\raw\train_dataset.json.bak (8.1 MB) and
+             data\raw\test_dataset.json.bak (0.61 MB) in place.
+
+A.11 LOCATE & STUDY sample_submission.csv                            [x] done
+     FINDING (Apr 29): sample_submission.csv is referenced in Kaggle's docs
+     but is NOT actually distributed. `kaggle competitions files` shows only
+     5 files (README.md, download.py, requirements.txt, train_dataset.json,
+     test_dataset.json). Schema derived from official spec instead -- see
+     v5 plan "Submission Format" subsection (Metric Reality section).
+     Required columns:
+       annotation_id, image_id, category_id,
+       bbox_x, bbox_y, bbox_width, bbox_height, score
+     COCO bbox format (top-left + width/height in pixels), score in [0,1],
+     category_id MUST be from the 32-value valid set (NOT 0-31).
+     Action: implement validate_submission() in src/submit.py (B.5) to
+     enforce these rules locally before any Kaggle submit.
+
+A.12 SAVE OFFICIAL EVALUATION NOTEBOOK                                [x] done
+     Apr 29: pulled lauravchrobak/map50-95 -> docs/eval_notebook/.
+     score() function uses pycocotools.cocoeval.COCOeval with default
+     settings + maxDets=100. We can replicate Kaggle's mAP@[.50:.95]
+     EXACTLY offline -- no need to burn submission slots on pipeline tests.
+     See B.5.5 below for the local-scorer wrapper.
+
+A.13 READ & DIGEST OFFICIAL COMPETITION RULES                         [x] done
+     Apr 29: read kaggle.com/competitions/fathomnet-2026/rules.
+     Hard constraints captured in v5 plan section
+     "Competition Rules -- Operational Constraints":
+       (1) 10 submissions/day, 2 final selections at deadline
+       (2) Winner license = Open Source (OSI-approved); Ultralytics
+           AGPL-3.0 forces our repo to AGPL-3.0 unless we drop YOLOv11
+       (3) MUST declare all external pretrained models on Discussion
+           board BEFORE first submission that uses them (B.0.5 below)
+       (4) Data redistribution PROHIBITED -- Kaggle Private Dataset
+           must be Private (not Unlisted); public GitHub repo must
+           NOT contain data/raw/ or any image files
+       (5) MBARI/FathomNet acknowledgement REQUIRED in working notes
+           paper and any publication
+       (6) Winners must publish reproduction-quality methodology and
+           code repo with instructions
+     Prize is "Kudos" only -- no cash. See v5 FLAG 9 for license tracking.
+
+A.14 PICK & ADD REPO LICENSE FILE                                     [x] done
+     Apr 29: AGPL-3.0 text fetched from gnu.org/licenses/agpl-3.0.txt
+     and saved to LICENSE at repo root (33 KB, 520 lines).
+     Why AGPL-3.0: Ultralytics YOLOv11 (our Phase 2 baseline detector)
+     ships under AGPL-3.0. The license is "viral copyleft" -- importing
+     ultralytics forces our entire repo to be AGPL-3.0 too. We don't
+     get to choose Apache/MIT.
+     If we later drop Ultralytics entirely (e.g., RT-DETR-only path),
+     we can relicense to Apache 2.0 by deleting LICENSE and replacing.
+     TODO when README is created: add SPDX-License-Identifier header.
+
+A.15 ADD .gitignore ENTRIES FOR DATA                                  [x] done
+     Apr 29: .gitignore restructured into 8 named groups. All 10 required
+     entries verified present:
+       data/raw/, data/labels/, data/backup/, data/folds/, weights/,
+       *.pt, *.tar, .env, kaggle.json, wandb/
+     Plus newly-added IDE excludes (.vscode/, .idea/) and
+     archive variant *.tar.gz.
+     Currently-existing items confirmed ignored: .env, wandb/, data/raw/,
+     data/backup/, venv/.
+     After A.7 git init: verify with `git status --ignored` -- should
+     show 5+ ignored entries and `git status` should NOT list any of
+     the above.
+
+================================================================================
+  BLOCK B  -  Apr 29 (TONIGHT) -> Apr 30 (TOMORROW)  ·  finish data + Phase 0
+  STATUS as of Apr 29 EOD: 3/11 done (B.1, B.1.5, B.2).
+  Remaining: B.0.5, B.2.5, B.3, B.4, B.5, B.5.5, B.6, B.7.
+  (B.0.5 + B.2.5 are HARD GATES before any submission.)
+================================================================================
+
+B.0.5 KAGGLE DISCUSSION POST: external models declaration             [ ] 15 min
+     **HARD GATE -- do this BEFORE first submission.**
+     Per competition Rule 6 ("External Data and Tools"), every external
+     pretrained model used must be declared on the Discussion board
+     before uploading results that use it.
+     Title: "External pretrained models -- [your team name]"
+     Initial body lists at least:
+       - YOLOv11 (Ultralytics, AGPL-3.0) pretrained on COCO
+       - BioClip2 (imageomics/bioclip-2, MIT) pretrained on TreeOfLife-10M
+       - DINOv2 (Meta, Apache 2.0) pretrained on LVD-142M  [if we use it]
+     Reply to your own post every time you add a new model in Phase 1+.
+     If post is missed: any submission that uses an undeclared model
+     risks disqualification.
+
+B.1  TRAIN IMAGE DOWNLOAD COMPLETES                                  [x] done
+     6463 / 6463 train + 1425 / 1425 test = 7888 files, 45.02 GB total
+     (Apr 29 ~10:57 PM). 4K (3840x2160) images make total larger than the
+     ~25 GB initial estimate. No failed downloads after final retry pass.
+
+B.1.5 LOCAL TAR ARCHIVE BACKUP                                        [x] done
+     Apr 29: data/backup/fathomnet_images.tar (45.02 GB, 7,888 files).
+     Single-file backup is dramatically faster to copy/move than 7,888
+     small files. Kept on local disk only -- per Rule 4 must NOT be
+     redistributed.
+
+B.2  DECODE SPOT-CHECK ON TRAIN IMAGES                               [x] done
+     30 random train files passed cv2.imread() decode (Apr 29).
+     Sample resolutions: 19x 1920x1080, 11x 3840x2160 -- matches v5
+     expected ~53/47 split.
+
+B.2.5 UPLOAD DATA AS KAGGLE PRIVATE DATASET                           [ ] 30 min
+     Lets Kaggle notebooks (used for free T4 baselines in Block C)
+     access the images without redownloading. Also serves as cloud
+     backup. PER COMPETITION RULE 4, MUST be Visibility=Private:
+       kaggle datasets init -p data/raw/
+       # edit dataset-metadata.json: title, id, license: "other"
+       kaggle datasets create -p data/raw/ -r tar
+       # then in Kaggle UI: Settings -> Visibility -> Private (NOT Unlisted)
+     Verify the gear icon shows a lock, not the world icon.
+     If accidentally made Public/Unlisted: delete immediately and
+     redo. Notify Kaggle if any download by a non-participant occurred.
+
+B.3  RUN notebooks/phase0_eda.ipynb END-TO-END                       [ ] 15 min
+     Open in Cursor or Jupyter. Kernel: "Python (fathomnet-2026)".
+     Run All. Confirms every Phase 0 artifact is produced:
+       configs/cat_id_mapping.py        (FLAG 1: non-contiguous IDs)
+       configs/fathomnet.yaml
+       configs/taxonomy.py              (Phase 5 dependency)
+       data/class_counts.json
+       data/rfs_repeat_factors.pkl
+       data/cv_folds.pkl
+       notes/phase0_decisions.md
+
+B.4  COMMIT PHASE 0 ARTIFACTS                                        [ ] 1 min
+     git add configs/ data/class_counts.json data/rfs_repeat_factors.pkl
+             data/cv_folds.pkl notes/phase0_decisions.md notebooks/
+     git commit -m "Phase 0 EDA artifacts"
+     git push
+
+B.5  WRITE src/submit.py HELPER (OWNS cat_id REVERSE MAPPING)        [ ] 1.5 hr
+     This is NOT explicit in v5 but addresses Failure Mode #1
+     (zero-score submission from forgotten cat_id reverse mapping).
+     Implement ONCE, import EVERYWHERE. Three functions:
+
+       def yolo_preds_to_submission_csv(pred_df, out_path) -> None:
+           # consumes 0-31 class indices, emits COCO category_ids (1-41 with gaps)
+           # uses configs/cat_id_mapping.py CLASS_IDX_TO_CAT_ID
+           # writes the 8-column schema from v5 "Submission Format" subsection
+
+       def validate_submission(csv_path) -> None:
+           # mirrors EVERY check the official scorer does:
+           #   - exact column name set + dtype check (numeric, no strings)
+           #   - no NaN / no Inf anywhere
+           #   - score in [0, 1] inclusive
+           #   - bbox_width > 0 strict, bbox_height > 0 strict
+           #   - category_id in {1,2,3,4,5,6,7,8,9,10,11,13,15,17,19,20,
+           #                     22,24,25,26,27,28,29,30,32,33,35,36,37,
+           #                     38,40,41}  (NOT 0-31, NOT 1-41)
+           #   - WARN if >100 detections per image (maxDets=100 cap)
+           #   - WARN on image_ids not present in dataset_test.json
+
+       def local_score(pred_df, fold_idx) -> float:
+           # builds the "solution" DataFrame from cv_folds.pkl + train GT,
+           # calls the docs/eval_notebook/map50-95.ipynb score() function,
+           # returns the EXACT mAP@[.50:.95] Kaggle would report.
+           # Lets us evaluate every Phase 2-7 run offline in seconds.
+
+     Wire into every phase's submission code as the only path to a CSV.
+
+B.5.5 BUILD SYNTHETIC sample_submission.template.csv                  [ ] 10 min
+     Since Kaggle doesn't ship one, create a 3-row dummy CSV in
+     data/raw/sample_submission.template.csv with the canonical schema
+     from B.5 above. Use real test image_ids and real category_ids.
+     Use it as the schema reference for validate_submission() unit tests.
+
+B.6  WRITE scripts/coco_to_yolo.py                                   [ ] 1 hr
+     CRITICAL: Ultralytics' built-in convert_coco() does naive
+     `category_id - 1` even with cls91to80=False (verified by reading
+     Ultralytics 8.4.39 source). For our non-contiguous IDs this would
+     produce wrong class indices AND require nc=41 with 9 dead classes.
+     See v5 plan FLAG 8 for the proof and exact bug pattern.
+     This script reads train_dataset.json + configs/cat_id_mapping.py
+     and emits data/labels/train/<image_id>.txt with CORRECT 0-31 class
+     indices. Run ONCE per data refresh.
+
+B.7  WRITE scripts/make_yolo_fold.py                                 [ ] 30 min
+     Reads data/cv_folds.pkl, emits per-fold image-list txts:
+       data/folds/train_fold0.txt   data/folds/val_fold0.txt
+       ... fold1 ... fold4
+     Each line is an absolute or repo-relative path to an image.
+     fathomnet.yaml's `train`/`val` keys point at these txts in Phase 2+.
+
+================================================================================
+  BLOCK C  -  Apr 30 - May 1 (Days 3-4)  ·  Phase 2 baselines (FREE)
+================================================================================
+
+  Reference: v5 plan lines 479-524.  Hardware: Kaggle FREE T4 (no $ spent).
+  Goal: establish a leaderboard reference + catch the cat_id-mapping bug
+        early when stakes are low.
+
+C.1  CREATE KAGGLE NOTEBOOK FOR PHASE 2 BASELINE                     [ ] 30 min
+     Kaggle's web UI -> "New Notebook" attached to fathomnet-2026 dataset.
+     Enable GPU (T4) in settings. Pip install ultralytics, then read images
+     via the COCO JSON.
+
+C.2  EXP 2.1 - YOLOv11n NANO SANITY (10 epochs, ~30 min)             [ ] 30 min
+     Just verify the pipeline runs end-to-end. Don't tune. Don't submit.
+
+C.3  EXP 2.2 - YOLOv11m BASELINE (50 epochs, imgsz=640, ~2 hr)       [ ] 2 hr
+     This is your reference run. Save weights as best_baseline.pt.
+     Compute val mAP@[.50:.95] on cv_folds.pkl fold 0 val set.
+
+C.4  SUBMIT FIRST CSV TO KAGGLE                                      [!] critical
+     Use src/submit.py to convert YOLO predictions -> CSV.
+     Validate against sample_submission.csv first (B.5 helper).
+     If LB mAP < 0.05, your cat_id mapping is broken -- STOP and fix.
+     Record LB score as your STARTING LINE.
+     NOTE: Kaggle competition phase usually limits 5 submissions/day --
+     budget them.
+
+C.5  EXP 2.3 - BACKBONE BAKE-OFF                                     [ ] 1.5 hr
+     Same training, three different starting weights:
+       (a) ImageNet (Ultralytics default)
+       (b) BioClip2 (HuggingFace: imageomics/bioclip-2)  [free, no Phase 1 needed]
+       (c) Phase 1 SSL backbone (only if you ran Phase 1 in parallel)
+     Decision rule: v5 lines 501-508. Pick the winner -> use for ALL later phases.
+
+C.6  COMMIT BASELINE WEIGHTS + LB SCORE                              [ ] 5 min
+     Add notes/phase2_baseline.md with: val mAP, LB mAP, winning backbone,
+     any oddities. Commit weights to /workspace on RunPod (NOT to git --
+     they're too big; save to a separate weights/ folder, gitignored).
+
+================================================================================
+  BLOCK D  -  Apr 30 - May 2 (Days 3-5)  [PARALLEL]  ·  Phase 1 SSL pretraining
+================================================================================
+
+  Reference: v5 plan lines 420-477.  Hardware: RunPod A100 80GB (~$45).
+  PARALLELISM: Phase 1 doesn't BLOCK Phase 2 unless you specifically want
+  the SSL backbone in the bake-off. Skip-rule: if behind on time, use
+  BioClip2 (free) and skip this entire block -> save $45.
+
+D.1  PHASE 1 INCLUDE/SKIP DECISION                                   [ ] 5 min
+     v5 lines 442-451. With ~9 days left and ~$200-300 budget:
+       Recommended: SKIP full SSL, USE BIOCLIP2 BACKBONE (free, +0.5-1.5 mAP).
+                    Saves $45 and 2 days. Bake-off in C.5 still confirms it wins.
+     If you want to do it anyway, see D.2-D.7 below.
+
+D.2  DEPLOY RUNPOD A100 80GB pod                                     [ ] 10 min
+     See docs/runpod_setup.txt Part B + C (Phase 1 row).
+     Cloud type: Community. Persistent volume: 80 GB at /workspace.
+
+D.3  RSYNC DATA + CODE TO POD                                        [ ] 15 min
+     From local PowerShell, after pod is running:
+       scp -P <port> -i ~/.ssh/runpod_ed25519 -r data/raw root@<ip>:/workspace/data/raw
+     ~25 GB upload, plan ~1 hr depending on home bandwidth.
+
+D.4  RUN SimCLR PRETRAINING (~10 hr, ~$25)                           [ ] 10 hr
+     v5 lines 453-468. Batch size >=512 on A100 80GB.
+
+D.5  (OPTIONAL) DINOv2 FINE-TUNE (~8 hr more, ~$20)                  [ ] optional
+     Only if D.4 looked great AND budget allows.
+
+D.6  SAVE BACKBONE WEIGHTS                                           [ ] 1 min
+     /workspace/weights/phase1_simclr.pt
+     scp back to local, commit metadata (NOT weights) to git.
+
+D.7  STOP THE POD                                                    [ ] 30 sec
+     RunPod -> Pods -> Stop (NOT Terminate -- keep the volume).
+
+================================================================================
+  BLOCK E  -  May 2-3 (Days 5-6)  ·  Phase 3 PU + class imbalance
+================================================================================
+
+  Reference: v5 plan lines 527-695.  Hardware: RunPod RTX 4090 (~$12).
+  This is your FIRST PAID RENTAL if you skipped Phase 1.
+
+E.1  DEPLOY RUNPOD RTX 4090 pod (Community)                          [ ] 10 min
+     If you already deployed for Phase 1, just reuse the same persistent
+     volume on a new pod with a different GPU.
+
+E.2  EXP 3.1 - ESTIMATE PU PRIOR pi  (CPU, no GPU)                   [ ] 30 min
+     v5 lines 549-557. Compute pi ~ annotated_image_rate * mean_annotated_area.
+     Save to notes/phase3_pi_estimate.md.
+
+E.3  EXP 3.2 - KIRYO PU OBJECTNESS LOSS  (~2 hr)                     [ ] 2 hr
+     Implement src/pu_loss.py per v5 lines 559-581.
+     Decision rule: include if Phase 0 single-cat-rate > 40%.
+     Success signal: val mAP improves >= 1 point AND precision stable.
+
+E.4  EXP 3.3 - EQUALIZED FOCAL LOSS (EFL)  (~2 hr)                   [ ] 2 hr
+     Implement src/efl_loss.py per v5 lines 583-609.
+     Decision rule: include (Phase 0 imbalance ratio is 817:1, > 50 trigger).
+     Success signal: rare-class AP +2-5 pts, frequent-class AP within 1 pt.
+
+E.5  EXP 3.4 - REPEAT FACTOR SAMPLING (RFS)  (~1 hr)                 [ ] 1 hr
+     Implement src/rfs_sampler.py per v5 lines 611-642.
+     Use data/rfs_repeat_factors.pkl from Phase 0.
+
+E.6  EXP 3.5 - SOFT TEACHER  (~4 hr)                                 [ ] 4 hr
+     v5 lines 643-680. Start with poor-man's version (2 rounds of pseudo-
+     labeling, EMA-averaged between rounds). Upgrade only if positive signal.
+     File: src/soft_teacher.py.
+
+E.7  EXP 3.6 - COMBINED EFL + RFS + KIRYO + SOFT TEACHER  (~3 hr)    [ ] 3 hr
+     v5 line 682-684. Phase 3 graduation experiment. Save best config.
+
+E.8  PHASE 3 EXIT DECISION                                           [ ] 15 min
+     v5 lines 686-695. If combined val mAP > baseline + 3 -> proceed to
+     Phase 4 with full stack. If +1 to +3 -> ablation, drop weak ones.
+     If < +1 -> debug; do NOT proceed until Phase 3 beats baseline.
+
+E.9  SUBMIT PHASE 3 BEST CSV TO KAGGLE                               [ ] 10 min
+     Track LB mAP improvement vs Phase 2 baseline.
+     COMMIT notes/phase3_results.md with per-experiment val mAP.
+
+E.10 STOP THE POD                                                    [ ] 30 sec
+
+================================================================================
+  BLOCK F  -  May 3-5 (Days 6-8)  ·  Phase 4 architecture + augmentation
+================================================================================
+
+  Reference: v5 plan lines 699-840.  Hardware: RunPod RTX 4090 (~$18).
+  ONE VARIABLE PER EXPERIMENT (v5 Rule #1).
+
+F.1  DEPLOY RUNPOD RTX 4090 pod (Community)                          [ ] 10 min
+
+F.2  EXP 4.1 - imgsz=1280 vs 640  (~2 hr)                            [ ] 2 hr
+     v5 lines 707-720. Phase 0 will recommend imgsz=1280 (small obj > 25%).
+
+F.3  EXP 4.2 - UNDERWATER PREPROC (gray-world + CLAHE)  (~2 hr)      [ ] 2 hr
+     v5 lines 722-748. Phase 0 cell 12 outputs the gray-world / CLAHE
+     decision flags. File: src/underwater_preproc.py.
+
+F.4  EXP 4.3 - UNDERWATER AUGMENTATION  (~2 hr)                      [ ] 2 hr
+     v5 lines 750-760. Aggressive Ultralytics hsv_h/hsv_s/hsv_v/degrees.
+     Always include.
+
+F.5  EXP 4.4 - CLASS-AWARE COPY-PASTE  (~3 hr)                       [ ] 3 hr
+     v5 lines 762-780. File: src/copy_paste.py. Pre-build rare-class
+     instance bank from train_dataset.json + actual image crops. p=0.5.
+     Special case: sea slug (7 instances) -- p=0.9 just for this class.
+
+F.6  EXP 4.5 - MULTI-SCALE TRAINING  (~3 hr)                         [ ] 3 hr
+     v5 lines 782-798. Ultralytics multi_scale=True, scale=(0.3, 1.0).
+
+F.7  EXP 4.6 - YOLOv11l (LARGER MODEL)  (~3 hr)                      [ ] 3 hr
+     v5 lines 800-810. Only if YOLOv11m plateaus.
+
+F.8  EXP 4.7 - RT-DETR  (~3 hr)                                      [ ] 3 hr
+     v5 lines 812-822. Need RT-DETR within 2 mAP of YOLO solo to include
+     in Phase 7 ensemble.
+
+F.9  (OPTIONAL) EXP 4.8 - MULTI-SCALE CONTEXT CROPS  (~2 hr)         [ ] optional
+     v5 lines 824-836. Only if confusion matrix shows habitat-related errors.
+
+F.10 PHASE 4 EXIT - PICK 1-2 BEST CONFIGS                            [ ] 30 min
+     These seed Phase 6 full training.
+     COMMIT notes/phase4_results.md with the ablation table.
+
+F.11 SUBMIT BEST PHASE 4 CSV TO KAGGLE                               [ ] 10 min
+
+F.12 STOP THE POD                                                    [ ] 30 sec
+
+================================================================================
+  BLOCK G  -  May 5 (Day 8)  ·  Phase 5 hierarchical + pseudo round 2
+================================================================================
+
+  Reference: v5 plan lines 844-892.  Hardware: Kaggle T4 + RunPod (~$5).
+  SHORT phase. Skippable if behind on time -- v5 ranks Phase 7 above this.
+
+G.1  GENERATE CONFUSION MATRIX FROM PHASE 3/4 BEST                   [ ] 30 min
+     Required for the include/skip decision. Compute on val fold 0.
+     If > 40% of errors are within-phylum (use configs/taxonomy.py to check)
+     -> include hierarchical loss.
+
+G.2  EXP 5.1 - HIERARCHICAL LOSS  (~4 hr)                            [ ] 4 hr
+     v5 lines 854-878. File: src/hierarchical_loss.py.
+     Refine configs/taxonomy.py with WoRMS lookups before this step --
+     the Phase 0 stub is a coarse approximation.
+
+G.3  EXP 5.2 - PSEUDO LABELING ROUND 2  (~4 hr)                      [ ] 4 hr
+     v5 lines 880-892. Only if round 1 gained > 1 mAP.
+
+G.4  PHASE 5 EXIT                                                    [ ] 15 min
+     COMMIT notes/phase5_results.md.
+
+G.5  SUBMIT PHASE 5 CSV (if it improved over Phase 4)                [ ] 10 min
+
+================================================================================
+  BLOCK H  -  May 5-7 (Days 8-10)  ·  Phase 6 full 5-fold + RT-DETR
+================================================================================
+
+  Reference: v5 plan lines 896-952.  Hardware: RunPod A100 40GB (~$80).
+  *** USE SECURE CLOUD, NOT COMMUNITY *** -- 40-hour run, can't risk preemption.
+  This is the MOST EXPENSIVE single rental in the plan.
+
+H.1  DEPLOY RUNPOD A100 40GB pod (SECURE CLOUD)                      [ ] 15 min
+     docs/runpod_setup.txt Part C (Phase 6 row). Verify volume mounted.
+
+H.2  GENERATE PER-FOLD YOLO TXT LISTS (if not done)                  [ ] 15 min
+     Run scripts/make_yolo_fold.py from B.7. Confirms 5 folds present.
+
+H.3  TRAIN FOLD 0 - YOLOv11m + Phase 5 winning config (~6 hr)        [ ] 6 hr
+     150 epochs, cosine LR, close_mosaic=20, full differentiator stack.
+     Save: /workspace/weights/yolo_fold0.pt
+
+H.4  TRAIN FOLDS 1-4 IN SEQUENCE  (~6 hr each, ~24 hr total)         [ ] 24 hr
+     Same config, different fold splits. Save all 5 weights.
+
+H.5  TRAIN RT-DETR ON ALL DATA  (~10 hr)                             [ ] 10 hr
+     v5 line 906. One full-data RT-DETR for architectural diversity.
+     Save: /workspace/weights/rtdetr_full.pt
+
+H.6  PHASE 6 EXIT - 5-FOLD VARIANCE CHECK                            [ ] 15 min
+     v5 lines 933-942. If fold mAP variance > 2 -> investigate before
+     Phase 7 (likely a rare-class-absent-from-fold issue).
+
+H.7  SCP ALL 6 WEIGHTS BACK TO LOCAL (BACKUP)                        [ ] 10 min
+     6 x ~200-400 MB. Don't lose them if pod is terminated.
+
+H.8  STOP (NOT TERMINATE) THE POD                                    [ ] 30 sec
+     Volume keeps weights for Phase 7. Stopped cost ~$5/month.
+
+================================================================================
+  BLOCK I  -  May 6-7 (Days 9-10)  ·  Phase 7 SAHI + WBF + per-class NMS + cal
+================================================================================
+
+  Reference: v5 plan lines 956-1082.  Hardware: RunPod RTX 4090 (~$14).
+  *** THIS IS WHERE mAP@[.50:.95] IS WON OR LOST. *** Five differentiators,
+  each adds mAP free of training compute.
+
+I.1  DEPLOY RUNPOD RTX 4090 pod (Community)                          [ ] 10 min
+
+I.2  IMPLEMENT src/sahi_inference.py (RESOLUTION-CONDITIONAL)        [ ] 2 hr
+     v5 lines 962-991. Detect image dims at inference; pick slice size:
+       w >= 1920 -> slice 640x640
+       w == 720  -> slice 320x320 (or skip SAHI)
+     This addresses FLAG 4 explicitly.
+
+I.3  EXP 7.1 - BEST SINGLE MODEL + TTA ONLY  (~1 hr)                 [ ] 1 hr
+     Isolates TTA gain. Submit -- track LB delta.
+
+I.4  EXP 7.2 - BEST SINGLE MODEL + SAHI ONLY  (~1 hr)                [ ] 1 hr
+     Isolates SAHI gain. Submit -- track LB delta.
+
+I.5  EXP 7.3 - BEST SINGLE + SAHI + TTA  (~1 hr)                     [ ] 1 hr
+     Combined inference stack. Submit.
+
+I.6  EXP 7.4 - 5-FOLD YOLO ENSEMBLE (WBF) + SAHI + TTA  (~4 hr)      [ ] 4 hr
+     v5 lines 1004-1018. WBF, NOT NMS. File: src/ensemble.py.
+     Submit.
+
+I.7  EXP 7.5 - 6-MODEL ENSEMBLE (+RT-DETR) + SAHI + TTA  (~4 hr)     [ ] 4 hr
+     RT-DETR weight grid: {0.6, 0.8, 1.0, 1.2, 1.4} on val.
+     Lock the weight that maximizes val mAP@[.50:.95]. Submit.
+
+I.8  EXP 7.6 - PER-CLASS NMS IoU TUNING  (~3 hr, CPU-only)           [ ] 3 hr
+     v5 lines 1025-1048. Sweep NMS IoU per class on val predictions.
+     File: src/per_class_nms.py. Lock per-class thresholds.
+
+I.9  EXP 7.7 - + SCORE CALIBRATION (isotonic + temp)  (~4 hr)        [ ] 4 hr
+     v5 lines 1050-1070. File: src/calibration.py. Try BOTH, keep winner
+     on held-out fold. Fit from 5-fold OOF predictions (free!).
+
+I.10 *** FINAL SUBMISSION CSV ***                                    [!] critical
+     6-model + SAHI (resolution-conditional) + TTA + per-class NMS + calibration.
+     Run src/submit.py validation against sample_submission.csv ONE LAST TIME.
+     Submit. This is your real submission of record.
+
+I.11 STOP THE POD                                                    [ ] 30 sec
+
+================================================================================
+  BLOCK J  -  May 7  ·  submission day
+================================================================================
+
+J.1  CONFIRM CHOSEN SUBMISSION ON KAGGLE (Submissions tab)           [!]
+     Kaggle uses your highest-scoring submission unless you flag a different
+     one. Click "Use for Final" on your I.10 submission to be safe.
+
+J.2  KAGGLE TEAM-MERGE DEADLINE                                      [ ]
+     Usually a few hours before competition end. If solo, ignore.
+
+J.3  STOP/TERMINATE ALL RUNPOD PODS (cost discipline)                [ ]
+     Stop all running pods. You can keep volumes for a few days while you
+     write the paper, then terminate volumes too once weights are backed up.
+
+================================================================================
+  BLOCK K  -  AFTER MAY 7  ·  CLEF working notes paper + cleanup
+================================================================================
+
+K.1  CLEF WORKING NOTES PAPER (3-5 pages)            DUE MAY 28      [ ] 1-2 days
+     **HARD DEADLINE: May 28, 2026** -- 3 weeks after Kaggle.
+     Required for CLEF official ranking. CEUR-WS template.
+     Sections: problem, data, our pipeline (each phase 1 paragraph),
+     ablation table, results, lessons learned. Cite the references in
+     v5 plan References section.
+     Citation header for the competition itself:
+       Kevin Barnard and Laura Chrobak. FathomNetCLEF2026 @ LifeCLEF
+       & CVPR-FGVC. https://kaggle.com/competitions/fathomnet-2026,
+       Unpublished. Kaggle.
+     REQUIRED ACKNOWLEDGEMENT (per competition Rule 5 / Data Use Policy):
+       "This work used data from FathomNet (https://www.fathomnet.org),
+        provided by the Monterey Bay Aquarium Research Institute (MBARI)."
+     Place in the Acknowledgements section. Substance must match;
+     wording can be paraphrased.
+
+K.1.5 PAPER REVISIONS                                  Notif Jun 30   [ ]
+     Acceptance/revision feedback arrives June 30, 2026.
+     Camera-ready due **July 6, 2026**. Plan ~2-3 days for revisions.
+
+K.1.7 CLEF 2026 CONFERENCE (optional)                  Sep 21-24      [ ]
+     Jena, Germany. Workshop presentation slot if paper accepted.
+     Travel + registration is on you; not in the $300 budget.
+     Skip is fine -- paper alone secures the official ranking.
+
+K.2  PUBLIC GITHUB REPO                                              [ ]
+     After deadline you can flip the repo to public. Add a clear README,
+     the master plan, the working notes paper, and runnable scripts.
+     Career angle (LLNL internship, etc.) per v5 plan "Background Note".
+     PER COMPETITION RULES (added Apr 29):
+       - LICENSE file must be present (A.14 picked AGPL-3.0)
+       - .gitignore (A.15) must exclude data/raw/, data/labels/,
+         data/backup/, *.tar, weights/, *.pt
+       - Verify with: git ls-files | grep -E "\.(jpg|png|tar)$"
+         Result must be empty.
+       - README must include the MBARI/FathomNet acknowledgement
+         from K.1 above.
+       - README must list every external pretrained model used (must
+         match the Discussion-board declaration from B.0.5).
+     Winners must provide reproduction instructions per Rule 5b -- so
+     the README must include exact commands to reproduce the final-2
+     submissions (not just "run train.py", but the specific config
+     files and seeds for each).
+
+K.3  TERMINATE RUNPOD VOLUMES                                        [ ]
+     Once weights are backed up locally and to GitHub releases, terminate
+     the volumes to stop the ~$5/month per-volume charge.
+     DO NOT terminate before May 28 -- you may need to re-run an
+     experiment for the working notes paper.
+
+K.4  ROTATE ALL TOKENS                                               [ ]
+     Kaggle, W&B, HuggingFace -- regenerate after the public repo push,
+     even though they were never committed. Cheap insurance.
+
+================================================================================
+  GLOBAL RULES  -  obey throughout
+================================================================================
+
+From v5 plan ("Global Operational Rules" section):
+
+  R1  ONE VARIABLE PER EXPERIMENT. Otherwise no attribution.
+  R2  SAVE WEIGHTS to /workspace/weights/ on RunPod after every promising run.
+  R3  STUDY FAILURE CASES after each phase (per-class AP, confusion matrix,
+      visualized FPs/FNs).
+  R4  READ THE 2025 WINNING SOLUTION on the Kaggle discussion board.
+  R5  STOP RUNPOD PODS WHEN IDLE. Running = charging even at rest.
+  R6  SUBMIT EARLY AND OFTEN. Every submission validates the pipeline.
+  R7  TRACK mAP@[.50:.95] ALWAYS, never mAP@0.5. Wrong metric = wrong choices.
+
+From official competition rules (added Apr 29, 2026):
+
+  R8  10 SUBMISSIONS PER 24-HOUR ROLLING WINDOW. Reserve daily slots --
+      target 1-3 real Kaggle submissions/day, keep 7+ as buffer. Use
+      B.5 local_score() for every "is this good?" check.
+  R9  AT THE DEADLINE you select 2 final submissions. Default plan:
+      (a) best single-model val mAP, (b) Phase 7 ensemble. Lock these
+      in 24 hrs before the deadline so you don't fat-finger at midnight.
+  R10 NEVER submit a CSV that hasn't passed validate_submission(). A
+      rejected submission still consumes a daily slot.
+  R11 DECLARE EVERY external pretrained model on the Discussion board
+      BEFORE the first submission that uses it (B.0.5). Update on each
+      new model added. No exceptions.
+  R12 NEVER REDISTRIBUTE the competition data. Kaggle Private Dataset
+      stays Private. Public GitHub repo stays data-free (.gitignore at
+      A.15). RunPod volumes are private to your account.
+  R13 LICENSE-CHECK every new pretrained model before adding it to the
+      pipeline. See v5 FLAG 9 for the current matrix. Anything not MIT/
+      Apache/BSD/AGPL needs a deliberate decision and writeup disclosure.
+
+================================================================================
+  TIME-CRITICAL ITEMS  (snapshot as of Apr 29 EOD)
+================================================================================
+
+  Done today (Apr 29):
+    A.5, A.6, A.10, A.11, A.12, A.13, A.14, A.15  (Block A: 12/15)
+    B.1, B.1.5, B.2                                (Block B: 3/11)
+
+  Already done before today:
+    A.1, A.2, A.3, A.4
+
+  Next 5 must-do items for Apr 30 (in order):
+
+  1. A.7   Git init + private GitHub push          (~10 min)
+  2. A.8   Cursor Remote-SSH extension install     (~2 min)
+  3. B.3   Run phase0_eda.ipynb end-to-end         (~15 min)
+  4. B.4   Commit Phase 0 artifacts (after B.3)    (~1 min)
+  5. A.9   RunPod account + $100 credit            (~15 min, do morning of Apr 30)
+
+  Rules-critical gates (don't skip even if "later"):
+   - B.0.5  Discussion-board declaration of pretrained models
+            (HARD GATE before first Kaggle submission in Block C)
+   - B.2.5  Upload data as Kaggle PRIVATE Dataset (NOT Public/Unlisted)
+
+  If you do these, the rest of the plan can proceed without blockers.
+================================================================================
