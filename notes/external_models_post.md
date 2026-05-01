@@ -12,9 +12,9 @@ The official Kaggle rules (Section 7, "External Data") say:
 
 > If you use external data or pretrained models, you must disclose them publicly on the discussion forum **before** the entry deadline.
 
-Failing to declare = automatic disqualification per the rules. Two pretrained models are baked into our pipeline, so we file ONE post that covers both, before our first leaderboard submission.
+Failing to declare = automatic disqualification per the rules. Two pretrained models are baked into my pipeline, so I file ONE post that covers both, before my first leaderboard submission.
 
-If we add anything later (a new ImageNet checkpoint to compare, an extra augmentation that uses pretrained weights, ANYTHING), we EDIT this same thread to keep one canonical record.
+If I add anything later (a new ImageNet checkpoint to compare, an extra augmentation that uses pretrained weights, ANYTHING), I EDIT this same thread to keep one canonical record.
 
 ---
 
@@ -29,7 +29,7 @@ If we add anything later (a new ImageNet checkpoint to compare, an extra augment
 ```markdown
 Hi all,
 
-Per the rules, declaring our external pretrained models up front. We are
+Per the rules, declaring my external pretrained models up front. I am
 NOT using any external image data — only the official FathomNet 2026
 train + test splits.
 
@@ -49,7 +49,7 @@ train + test splits.
 - Pretraining data: TreeOfLife-10M — 10M labeled images of organisms across
   the tree of life (curated from iNaturalist, EOL, BIOSCAN, etc.)
 - License: MIT (model weights), CC-BY-NC 4.0 (some training images, but the
-  WEIGHTS are MIT and the weights are what we use)
+  WEIGHTS are MIT and the weights are what I use)
 - Why: features pretrained on biology imagery transfer better to marine
   organisms than ImageNet-pretrained features
 
@@ -57,11 +57,11 @@ train + test splits.
 
 - Training images: official `train_dataset.json` only (6,463 images)
 - Test images: official `test_dataset.json` only (1,425 images)
-- We are NOT using FathomNet's broader public image archive, iNaturalist
+- I am NOT using FathomNet's broader public image archive, iNaturalist
   scrapes, web-scraped marine imagery, or any unlabeled data outside the
   competition.
 
-If we add anything later we'll EDIT this post.
+If I add anything later I'll EDIT this post.
 
 Thanks,
 [YOUR NAME / TEAM]
@@ -75,11 +75,11 @@ Thanks,
 2. Mark B.0.5 as `[x] done` with the URL.
 3. Until then, **do not** click "Submit" on any leaderboard probe — a single submission before declaration could be grounds for DQ at audit time.
 
-## Edits to make if we add anything
+## Edits to make if I add anything
 
-If during Phase 5/6 we decide to use:
+If during Phase 5/6 I decide to use:
 - **An additional pretrained model** (e.g. SAM2 for refining boxes, DINOv2 for features) → add a section 4, edit the post.
 - **Test-time augmentation that imports a 3rd-party model** → declare it.
-- **Any pretrained weights even if not used in the final ensemble** → declare them anyway, the rule says "use", and any weights touching our training pipeline count.
+- **Any pretrained weights even if not used in the final ensemble** → declare them anyway, the rule says "use", and any weights touching my training pipeline count.
 
-We can ALWAYS edit the post freely up to the entry deadline. The cost of an extra disclosure is zero; the cost of a missed disclosure is disqualification.
+I can ALWAYS edit the post freely up to the entry deadline. The cost of an extra disclosure is zero; the cost of a missed disclosure is disqualification.

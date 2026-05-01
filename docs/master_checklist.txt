@@ -5,7 +5,7 @@
     docs/account_setup.txt   - account / tooling setup details
     docs/runpod_setup.txt    - RunPod rental + per-phase pod recipe
 
-  Last updated: 2026-04-30 (end of day)
+  Last updated: 2026-04-30 ~23:50 PT (late evening update)
   Days to Kaggle deadline (May 7): 7
   Days to working notes paper deadline (May 28): 28
 ================================================================================
@@ -164,30 +164,30 @@ A.15 ADD .gitignore ENTRIES FOR DATA                                  [x] done
 
 ================================================================================
   BLOCK B  -  Apr 29 -> Apr 30 EOD  ·  finish data + Phase 0
-  STATUS as of Apr 30 ~23:05 PT: 9/11 done.
-    DONE: B.1, B.1.5, B.2, B.3, B.4, B.5, B.5.5, B.6, B.7
-    REMAINING: B.0.5 (Kaggle Discussion post -- HARD GATE before any
-                      leaderboard submit) and B.2.5 (Kaggle Private
-                      Dataset upload -- only needed if using Kaggle T4
-                      notebooks for Phase 2 baselines).
+  STATUS as of Apr 30 ~23:50 PT: 11/12 done.
+    DONE: B.0.5, B.1, B.1.5, B.2, B.3, B.4, B.4.5, B.5, B.5.5, B.6, B.7
+    DEFERRED: B.2.5 (Kaggle Private Dataset upload -- not needed under
+                     v5.4 strategy that uses RunPod RTX 4090 for Phase 2
+                     baselines instead of Kaggle T4 notebooks; re-enable
+                     only if RunPod outage / budget exhausted).
     Data pipeline END-TO-END VERIFIED: coco_to_yolo wrote 22,225 labels,
     Ultralytics check_det_dataset(fold0.yaml) returned OK Apr 30 ~23:03 PT.
+    Phase 0 deep review (B.4.5) confirmed all 6 EDA decision rules and
+    surfaced 2 plan tweaks: imgsz Phase 4 ablation + per-class copy-paste
+    schedule. Master plan updated to v5.4.
+    B.0.5 hard gate cleared at ~23:45 PT -- Kaggle submissions now unblocked.
 ================================================================================
 
-B.0.5 KAGGLE DISCUSSION POST: external models declaration             [ ] 15 min
-     **HARD GATE -- do this BEFORE first submission.**
-     Per competition Rule 6 ("External Data and Tools"), every external
-     pretrained model used must be declared on the Discussion board
-     before uploading results that use it.
-     Title: "External pretrained models -- [your team name]"
-     Initial body (locked Apr 30, both models will be used):
-       - YOLOv11 (Ultralytics, AGPL-3.0) pretrained on MS-COCO
-       - BioCLIP2 (imageomics/bioclip-2, MIT) pretrained on TreeOfLife-10M
-         (curated biology dataset including iNaturalist + museum specimens)
-     Reply to your own post if you add any other model later (e.g. RT-DETR
-     pretrained checkpoints in Phase 6, SAM for any segmentation experiment).
-     If post is missed: any submission that uses an undeclared model
-     risks disqualification.
+B.0.5 KAGGLE DISCUSSION POST: external models declaration             [x] done
+     Apr 30 ~23:45 PT: posted to Kaggle Discussion board declaring both
+     external pretrained models (YOLOv11 with COCO + BioCLIP2 with
+     TreeOfLife-10M) before any leaderboard submission, per competition
+     Rule 6. Hard gate cleared. Title used: "External Data Declaration
+     -- navya2392". URL TODO: paste the post URL here when convenient.
+     Source draft is in notes/external_models_post.md (kept for
+     reference if any future model needs to be appended via thread edit).
+     Edit the Kaggle post (NOT this file) if RT-DETR weights, SAM, or
+     any other pretrained checkpoint joins the pipeline later.
 
 B.1  TRAIN IMAGE DOWNLOAD COMPLETES                                  [x] done
      6463 / 6463 train + 1425 / 1425 test = 7888 files, 45.02 GB total
@@ -205,17 +205,26 @@ B.2  DECODE SPOT-CHECK ON TRAIN IMAGES                               [x] done
      Sample resolutions: 19x 1920x1080, 11x 3840x2160 -- matches v5
      expected ~53/47 split.
 
-B.2.5 UPLOAD DATA AS KAGGLE PRIVATE DATASET                           [ ] 30 min
-     Lets Kaggle notebooks (used for free T4 baselines in Block C)
-     access the images without redownloading. Also serves as cloud
-     backup. PER COMPETITION RULE 4, MUST be Visibility=Private:
+B.2.5 UPLOAD DATA AS KAGGLE PRIVATE DATASET                           [-] deferred
+     DEFERRED under v5.4 strategy. Originally needed if Phase 2 baselines
+     ran on Kaggle T4 notebooks (the free fallback path). v5.4 chose
+     RunPod RTX 4090 instead because:
+       * RTX 4090 ~10x faster than T4 (~80 vs ~8 TFLOPS)
+       * Pay-per-second beats Kaggle's 30 hr/week quota for our 7-day window
+       * No 100 GB Kaggle disk cap (RunPod volume is 100 GB persistent + extendable)
+       * Already have local backup at data/backup/fathomnet_images.tar (45 GB)
+     Re-enable ONLY if:
+       (1) RunPod has a sustained outage during May 1-7
+       (2) Budget exhausted ($100 RunPod credit + buffer hit before final ensemble)
+       (3) Want a redundant cloud backup of the 45 GB tar
+     If re-enabling: ~2-8 hr upload (depends on internet speed).
        kaggle datasets init -p data/raw/
        # edit dataset-metadata.json: title, id, license: "other"
        kaggle datasets create -p data/raw/ -r tar
        # then in Kaggle UI: Settings -> Visibility -> Private (NOT Unlisted)
      Verify the gear icon shows a lock, not the world icon.
-     If accidentally made Public/Unlisted: delete immediately and
-     redo. Notify Kaggle if any download by a non-participant occurred.
+     PER COMPETITION RULE 4: must be Visibility=Private (NOT Unlisted).
+     If accidentally made Public/Unlisted: delete immediately and redo.
 
 B.3  RUN notebooks/phase0_eda.ipynb END-TO-END                       [x] done
      User confirmed Apr 30 00:13 PT: notebook ran end-to-end.
@@ -395,34 +404,66 @@ C.6  COMMIT BASELINE WEIGHTS + LB SCORE                              [ ] 5 min
   Phase 7 ablation experiments (extra WBF model in ensemble, more SAHI
   configs, etc.) -- see Block J cost re-budget.
 
-D.1  DOWNLOAD BIOCLIP2 WEIGHTS FROM HUGGING FACE                     [ ] 15 min
-     huggingface-cli download imageomics/bioclip-2 --local-dir weights/bioclip2
-     Size: ~1.5 GB. Public model -- HF token NOT required, but having one
-     avoids anonymous rate limits (see A.5.5 if you want one).
-     Verify: ls weights/bioclip2/  ->  should show config.json + model.safetensors
+D.1  DOWNLOAD BIOCLIP2 WEIGHTS FROM HUGGING FACE                     [x] done
+     Apr 30 ~23:35 PT: snapshot_download() pulled 10 files into
+     weights/bioclip2/ (3.26 GB total -- safetensors + .bin duplicates).
+     Files verified: open_clip_model.safetensors (1.63 GB),
+     open_clip_pytorch_model.bin (1.63 GB, can be deleted to reclaim
+     space), open_clip_config.json, tokenizer files, README.md.
+     Note: original `python -m huggingface_hub.commands.huggingface_cli`
+     command in earlier checklist failed because the CLI was renamed
+     in huggingface_hub 1.x (now `hf` instead of `huggingface-cli`).
+     The version-agnostic snapshot_download() form works on any version:
+       python -c "from huggingface_hub import snapshot_download; snapshot_download('imageomics/bioclip-2', local_dir='weights/bioclip2')"
 
-D.2  WRITE BACKBONE ADAPTER                                          [ ] 45 min
-     Create src/bioclip2_backbone.py (~30 lines):
-       - Load BioCLIP2 vision tower (open_clip-style)
-       - Project its feature dim to YOLOv11 backbone's expected channels
-       - Wrap in nn.Module so YOLOv11 can swap it in via the model YAML
-     Reference: BioCLIP2 model card on HF + Ultralytics custom backbone docs.
+D.2  SMOKE-TEST BIOCLIP2 LOADING + FORWARD PASS                      [x] done
+     Apr 30 ~23:38 PT: open_clip.create_model_and_transforms('hf-hub:imageomics/bioclip-2')
+     loaded successfully. Forward pass on torch.randn(1,3,224,224) returned
+     feature shape torch.Size([1, 768]).
+     CONFIRMED ARCHITECTURE FACTS (fills the section 2 TODOs in
+     notes/phase1_bioclip2_research.md):
+       * Architecture: CLIP (ViT-L/14)
+       * Native input: (224, 224)  <- model.visual.image_size
+       * Output dim (CLS-pooled): 768  <- after the CLIP projection head
+       * Patch tokens (raw ViT, before projection): expected (256, 1024) at 224 input
+     Implication for D.4: ViT outputs single-scale features. Adapter must
+     synthesize multi-scale (P3/P4/P5) via interpolation + per-scale 1x1
+     convs. This is exactly what notes/phase1_bioclip2_research.md
+     section 3 (Option A) describes.
 
-D.3  WRITE configs/yolov11_bioclip2.yaml                             [ ] 15 min
-     Copy Ultralytics' yolov11s.yaml, replace the backbone block with a
-     reference to src/bioclip2_backbone.py:BioCLIP2Backbone.
-     Keep YOLOv11's neck + head unchanged (BioCLIP2 only replaces the
-     "what does this image look like" half).
+D.3  CAPTURE YOLOv11m BACKBONE SHAPES                                [ ] 15 min
+     Run scripts/inspect_yolo_backbone.py to dump P3/P4/P5 channel counts
+     and spatial dims at imgsz=640 AND imgsz=1280 (Phase 4 ablation will
+     test both). Output drives D.4 adapter projection dims.
+     Script uses forward hooks on yolo11m.pt to capture intermediate
+     tensors. Saves output to notes/yolo11m_backbone_shapes.txt for
+     reference.
 
-D.4  SMOKE-TEST FORWARD PASS                                         [ ] 15 min
-     python -c "from ultralytics import YOLO; m=YOLO('configs/yolov11_bioclip2.yaml');
-                import torch; out=m(torch.randn(1,3,640,640)); print(out[0].shape)"
-     Expected: prints a tensor shape, no errors. Confirms backbone wires
-     into YOLOv11 cleanly. NO TRAINING YET -- just structural check.
+D.4  IMPLEMENT BIOCLIP2 -> YOLO ADAPTER                              [ ] 3-5 hr
+     Create src/bioclip2_yolo.py (~150 lines, Option A from
+     notes/phase1_bioclip2_research.md section 3):
+       - Frozen BioCLIP2 ViT-L/14 (no gradients, eval mode)
+       - Per-scale 1x1 conv adapters projecting 1024 -> P3/P4/P5 channels
+       - Bilinear interpolation to match P3/P4/P5 spatial dims
+       - Concat at neck level (NOT replacement -- preserves YOLO's
+         convolutional features tuned by COCO pretraining)
+     Plus configs/yolov11m_bioclip2.yaml that references the adapter.
+     Adapter init weights ~ 0 so first forward pass behaves like vanilla
+     YOLO; gradient signal grows the BioCLIP2 contribution over training.
 
-D.5  COMMIT THE ADAPTER + CONFIG                                     [ ] 1 min
-     git add src/bioclip2_backbone.py configs/yolov11_bioclip2.yaml
-     git commit -m "Phase 1: BioCLIP2 backbone adapter + YOLOv11 config"
+D.5  SMOKE-TEST FORWARD PASS + 50-STEP TRAINING                      [ ] 30 min
+     Two checks:
+       (1) python -c "from ultralytics import YOLO; m=YOLO('configs/yolov11m_bioclip2.yaml');
+                      import torch; out=m(torch.randn(1,3,640,640)); print([t.shape for t in out])"
+           Expected: 3 tensors with shapes matching YOLOv11m P3/P4/P5.
+       (2) 50-step training loop on fold 0, batch=2, CPU OK. Just confirms
+           loss decreases, no NaN, no shape mismatches at the loss head.
+     If both pass: commit src/bioclip2_yolo.py + configs/yolov11m_bioclip2.yaml,
+     and Block D is complete.
+
+D.6  COMMIT THE ADAPTER + CONFIG                                     [ ] 1 min
+     git add src/bioclip2_yolo.py configs/yolov11m_bioclip2.yaml scripts/inspect_yolo_backbone.py
+     git commit -m "Phase 1 (D.3-D.5): BioCLIP2 backbone adapter + YOLOv11m config + smoke tests"
      git push
      Do NOT commit weights/bioclip2/ (it's in .gitignore via weights/).
 
@@ -743,46 +784,58 @@ From official competition rules (added Apr 29, 2026):
       Apache/BSD/AGPL needs a deliberate decision and writeup disclosure.
 
 ================================================================================
-  TIME-CRITICAL ITEMS  (snapshot as of Apr 30 ~23:05 PT)
+  TIME-CRITICAL ITEMS  (snapshot as of Apr 30 ~23:50 PT)
 ================================================================================
 
-  Done today (Apr 30, full day):
+  Done today (Apr 30, full day + late evening burst):
     A.9                                                      (Block A: 15/15 DONE)
-    B.5, B.5.5, B.6, B.7                                     (Block B: 9/11)
+    B.0.5, B.4.5, B.5, B.5.5, B.6, B.7                       (Block B: 11/12)
+    D.1, D.2                                                 (Block D: 2/6)
     Data pipeline END-TO-END VERIFIED via check_det_dataset(fold0.yaml) -> OK.
+    BioCLIP2 weights live + forward-pass-verified (CLIP ViT-L/14, 224x224, 768d).
+    B.0.5 HARD GATE cleared -- Kaggle leaderboard submissions now unblocked.
+    Master plan bumped to v5.4 after Phase 0 deep review:
+      * 6 EDA decision rules confirmed triggered by wide margins
+      * imgsz tension -> Phase 4 EXP 4.1 ablation
+      * SAHI tension -> resolution-conditional routing in Phase 7
+      * Per-class copy-paste schedule designed for Phase 4 EXP 4.4
+    B.2.5 downgraded to DEFERRED (RunPod RTX 4090 chosen over Kaggle T4).
 
   Done earlier in the project (Apr 28-29):
     A.1-A.8, A.10-A.15
     B.1, B.1.5, B.2, B.3, B.4
 
+  Overnight (Apr 30 -> May 1) -- agent task list, NO user intervention required:
+    D.3       Capture YOLOv11m P3/P4/P5 backbone shapes (script + notes file)
+    D.4       Implement src/bioclip2_yolo.py + configs/yolov11m_bioclip2.yaml
+    D.5       Smoke-test forward pass + 50-step training on fold 0 (CPU)
+    D.6       Commit Block D artifacts (adapter + config + inspect script)
+    Bonus:    scripts/train_phase2_baseline.py for tomorrow's RunPod run
+    Bonus:    scripts/predict_test_set.py wired to src/submit.py
+    Stretch:  src/efl_loss.py skeleton for Block E (Phase 3)
+
   Next must-do items for May 1 (Friday) -- in execution order:
 
-  1. B.0.5  Post external-models declaration on Kaggle Discussion (~5 min)
-            HARD GATE: do this BEFORE any leaderboard submission.
-            Draft already in notes/external_models_post.md -- just edit
-            your name in and post. Paste the URL here when done.
+  1. Review overnight work (~15 min)
+       * git log --oneline -10  to see what landed
+       * Read updated notes/overnight_summary.md for the morning briefing
+       * Spot-check one or two key files (src/bioclip2_yolo.py is the big one)
 
-  2. D.1    Download BioCLIP2 weights from HuggingFace      (~15 min, ~2.5 GB)
-            See notes/phase1_bioclip2_research.md section 7 step 1.
+  2. (If Block D smoke tests passed overnight)
+     Deploy first RunPod RTX 4090 pod (~10 min)
+       * docs/runpod_setup.txt has the per-phase recipe
+       * git clone https://github.com/navya2392/fathomnet-2026 + scp data/
 
-  3. D.2    Smoke-test BioCLIP2 model loading              (~5 min, local)
-            Confirms weights work + gives real shape numbers for D.4.
+  3. C.2-C.4  Vanilla YOLOv11m baseline + first Kaggle submission (~3 hr)
+       * "First-submission anchoring rule" -- vanilla baseline FIRST,
+         BioCLIP2 bake-off is C.5
+       * Submit via src/submit.py to validate the pipeline end-to-end
+       * Record LB score as the STARTING LINE for every later experiment
 
-  4. D.3    Capture YOLOv11 P3/P4/P5 backbone shapes       (~10 min, local)
-            Forward-hook on yolo11m.pt to fill the TODO in research notes.
+  Rules-critical gates remaining:
+   - B.0.5  CLEARED tonight (Apr 30 ~23:45 PT).
+   - B.2.5  Deferred (only if RunPod has issues -- see B.2.5 entry above).
 
-  5. D.4    Implement bioclip2_yolo.py adapter             (~4-6 hr, local)
-            Option A from notes/phase1_bioclip2_research.md (frozen ViT
-            features + small adapter into YOLO neck).
-
-  6. D.5    Smoke-test 100-step training run on fold 0     (~30 min)
-            On laptop CPU is fine for shape verification only.
-
-  Rules-critical gates (don't skip):
-   - B.0.5  HARD GATE before first leaderboard submit (item 1 above).
-   - B.2.5  Upload data as Kaggle PRIVATE Dataset (NOT Public/Unlisted)
-            (only needed if you'll use Kaggle T4 notebooks; can defer
-             if going straight to RunPod for Phase 2 baselines too).
-
-  Once D.4-D.5 land, we're ready for first RunPod rental ~May 2-3.
+  We're ready for first RunPod rental ~May 1 afternoon (assuming D.4-D.5
+  land overnight). Schedule pulled forward by ~24 hours vs the original plan.
 ================================================================================

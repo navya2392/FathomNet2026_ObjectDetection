@@ -1,8 +1,8 @@
 # FathomNet 2026 — Master Plan v5
 
-**Today:** Wednesday, April 29, 2026
-**Kaggle deadline:** May 7, 2026 (8 days remaining)
-**Working notes paper deadline:** May 28, 2026 (29 days remaining)
+**Today:** Thursday, April 30, 2026 (EOD)
+**Kaggle deadline:** May 7, 2026 (7 days remaining)
+**Working notes paper deadline:** May 28, 2026 (28 days remaining)
 **Budget:** up to $300 (target ~$230, leave ~$70 headroom)
 
 **Schedule reality (added April 29):** This plan was originally drafted for an April 17 start (20-day runway). Effective work began April 28-29 due to a hiatus, leaving 8 days to the Kaggle deadline. The phase-by-phase technique recommendations remain unchanged, but the per-day timeline in the "Timeline — 20 Days" table needs to be compressed: each day of the original plan now corresponds to roughly 0.4 calendar days. Practical impact: skip backup-tier techniques (e.g., extended SSL pretraining) and focus on the must-have items (PU baseline, EFL+RFS, SAHI, WBF ensemble). See checklist for the compressed per-day plan.
@@ -23,6 +23,19 @@
 - **NEW FLAG 8 added:** Ultralytics' built-in `convert_coco()` does naive `category_id - 1` even with `cls91to80=False`. Verified by reading source. Cannot be used for FathomNet 2026 — would silently corrupt training labels. Custom converter required.
 - **Working notes paper deadlines confirmed** (May 28 submission, June 30 notification, July 6 camera-ready, CLEF Sept 21–24 in Jena). Added to timeline.
 - **Test set is fully annotated on the evaluator's side** ("1,425 fully annotated images" per the official overview). FLAG 5 still holds for our LOCAL `dataset_test.json` which contains zero annotations by design — that's the participant-facing data, not what the evaluator sees.
+
+**Changelog from v5.3 → v5.4 (Phase 0 deep review + plan modernization, April 30, 2026 EOD):**
+- **All 6 EDA decision rules confirmed triggered.** Re-evaluation against the live `class_counts.json`, `cv_folds.pkl`, and `rfs_repeat_factors.pkl` shows every threshold was crossed by a wide margin (imbalance 818:1 vs threshold 10; 14 classes <100 instances vs threshold 5; 9 classes <50 instances vs threshold 3; 62.5% single-cat-image rate vs threshold 50%). EFL + RFS + class-aware copy-paste + Soft Teacher + Kiryo PU + SAHI + multi-scale are all still mandatory.
+- **Two tensions between local EDA and master plan resolved:**
+  - **imgsz**: EDA recommends 640 (training object pixel sizes); plan says 1280 (test resolution shift). Resolution: Phase 4 EXP 4.1 ablation. Both numbers needed.
+  - **SAHI**: EDA says optional (5.1% small-object rate); plan says mandatory (test resolution shift). Resolution: SAHI is **resolution-conditional** — optional for the >86% high-res test subset, mandatory for the 14% low-res (720×486) subset. Phase 7 (I.2) does the routing.
+- **Per-class copy-paste schedule added** to Phase 4 EXP 4.4 (see updated section). Sea slug at 7 instances is "near-pathological" — single global probability is suboptimal. Schedule: critical (<30 inst, p=0.7-0.9), rare (30-99, p=0.4-0.6), mid (100-999, p=0.2-0.3), common (≥1000, p=0.05-0.1).
+- **New "top findings → model design" table added at end of `notebooks/phase0_eda.ipynb`** for the working notes paper. Every Phase 2-7 design choice traces to a specific Phase 0 number — this is how reviewers tell "data-driven design" from "kitchen sink".
+- **Timeline section completely rewritten** for the actual 7-day remaining window (May 1-7), with day-by-day plan, GPU-cost per day, and explicit drop list for if-behind-schedule scenarios. The original 20-day table was deleted (was wrong on every date and on Phase 1 SSL allocation).
+- **Phase 0 section header marked COMPLETE** with retrospective framing. Stream A and Stream B are now historical reference, not active instructions.
+- **Phase 2 strategy revised**: skip Kaggle T4 free tier, run baselines on RunPod 4090 (~$3 total). Kaggle T4 advantage was "free" but its 9-hour session limit + 4× slower training cost more wall-clock hours than they saved in dollars. With the unused budget headroom, this is a clear win.
+- **First-submission anchoring rule codified**: first Kaggle submission MUST be vanilla YOLOv11m baseline (around May 2), NOT the BioCLIP2-augmented model. Validates submission pipeline + anchors leaderboard for all later experiments.
+- **No new RUNPOD spend triggered** by the review itself. The Phase 2 RunPod recommendation adds ~$3 (negligible).
 
 **Changelog from v5.2 → v5.3 (Phase 1 decision lock, April 30, 2026):**
 - **Phase 1 path locked: BioCLIP2 backbone.** SimCLR/DINOv2 SSL pretraining (the original Path 3) is removed from the active plan. With 8 days remaining, a 24-hour GPU run for an uncertain +1-2 mAP delta is a bad trade. BioCLIP2 captures +2 to +5 mAP at $0 cost.
@@ -386,28 +399,92 @@ Phase 7 expanded by ~3 hours to accommodate per-class NMS tuning — that's the 
 
 ---
 
-## Timeline — 20 Days
+## Timeline — Compressed (7 days remaining as of Apr 30 EOD)
 
-| Days | Dates | Phase | Focus |
-|---|---|---|---|
-| 1–2 | Apr 17–18 | 0 | EDA + CLEF registration + download kickoff + environment setup |
-| 3–5 | Apr 19–21 | 1 | SSL pretraining |
-| 6–7 | Apr 22–23 | 2 | Baselines + first submission |
-| 8–10 | Apr 24–26 | 3 | PU + class imbalance experiments |
-| 11–13 | Apr 27–29 | 4 | Architecture + augmentation ablations |
-| 14 | Apr 30 | 5 | Hierarchical loss + pseudo round 2 |
-| 15–18 | May 1–4 | 6 | Full training (5-fold + RT-DETR) |
-| 19 | May 5 | 7 | SAHI + WBF ensemble + calibration + per-class NMS |
-| 20 | May 6 | Buffer | Final submission, last fixes |
-| 21 | May 7 | **KAGGLE DEADLINE** | Submit by 11:59 PM CET |
-| +21 | May 28 | CLEF working notes | 3–5 page paper to CEUR-WS proceedings (REQUIRED for official ranking) |
-| +52 | June 30 | Notification | Acceptance/revision feedback |
-| +58 | July 6 | Camera-ready | Final paper version due |
-| +145 | Sept 21–24 | CLEF 2026 Jena, Germany | Conference (optional attendance) |
+The original 20-day plan no longer applies (work started Apr 28, not Apr 17). Below is the actual day-by-day plan for the time remaining. Phase 1 SSL was removed (locked v5.3); BioCLIP2 captures the same gain in ~2 hours instead of 3 days.
 
-**Note on "official ranking":** Kaggle leaderboard score alone does NOT make you part of the officially published ranking. You must also submit a working note paper to LifeCLEF by **May 28**. Plan ~3 days of writing time after the Kaggle deadline.
+### What's already done (Apr 28-30)
 
-**Golden rule:** One variable changed per experiment. Attribution is impossible otherwise.
+| Date | Done |
+|---|---|
+| Apr 28 | OneDrive paused, CLEF registration, Kaggle enrollment + rules, Kaggle API token |
+| Apr 29 | W&B account, env setup, .env created, JSON snapshot, sample submission schema derived (file doesn't exist), official eval notebook vendored, competition rules digested, AGPL-3.0 LICENSE, .gitignore expanded, train images downloaded (45 GB, 7,888 files), tar backup, decode spot-check |
+| Apr 30 | Phase 0 EDA notebook ran end-to-end (7 artifacts produced); Phase 0 deep review + master plan v5.4 update; src/submit.py + 29 tests; coco_to_yolo.py (22,225 labels written); make_yolo_fold.py (5 folds, check_det_dataset → OK); RunPod account + $100 credit + SSH key; GitHub private repo with 8 clean commits |
+
+### What's left (May 1-7)
+
+| Date | Day | Phase | Focus | Hours | RunPod $ |
+|---|---|---|---|---|---|
+| May 1 | Fri | B / 1 | B.0.5 Kaggle Discussion post (HARD GATE); D.1 BioCLIP2 download; D.2-D.5 BioCLIP2 adapter + smoke-test (LOCAL, no GPU) | 6-8 | $0 |
+| May 2 | Sat | 2 | Phase 2 baselines on RunPod 4090 (NOT Kaggle T4 — see "Phase 2 strategy revision" below). YOLOv11n nano sanity (30 min), YOLOv11m baseline (3 hr on 4090), backbone bake-off ImageNet vs BioCLIP2 (3 hr). **First Kaggle submission lands here — anchors leaderboard.** | 8 | ~$3 |
+| May 3 | Sun | 3 | Phase 3 PU + class imbalance experiments. Kiryo PU, EFL, RFS, Soft Teacher (each ~2-4 hr on 4090). Combined run. | 12-14 | ~$8 |
+| May 4 | Mon | 4 | Phase 4 architecture + augmentation. EXP 4.1 imgsz 640 vs 1280 (RESOLVES Phase 0 tension), 4.2 underwater preproc, 4.3 underwater aug, 4.4 class-aware copy-paste (per-class schedule from v5.4), 4.5 multi-scale, 4.6 YOLOv11l, 4.7 RT-DETR. Skip 4.8 if behind. | 16-18 | ~$12 |
+| May 5 | Tue | 5 + 6 | Phase 5 hierarchical loss + pseudo R2 (~6 hr). KICK OFF Phase 6: 5-fold CV training with winning Phase 4 config on **A100 SECURE Cloud** (preempt-safe). Train fold 0 + start folds 1-4 sequentially. | 12 + overnight | ~$25 |
+| May 6 | Wed | 6 + 7 | Phase 6 finishes (folds 1-4 + RT-DETR full-data run). Phase 7 SAHI+TTA+WBF+calibration+per-class NMS on 4090. Multiple Kaggle submissions to compare. | 16 | ~$22 |
+| May 7 | Thu | Buffer + Submit | Final submission selection (2 selections allowed). Stop all pods. Backup weights. Verify submission CSV via local validate_submission. | 4 | $0 |
+| **May 7 23:59 PT** | | | **KAGGLE DEADLINE** | | |
+| **Subtotal** | | | | **~75 hr** | **~$70** |
+| Buffer (rerun, debug, exploded configs) | | | | | ~$30 |
+| **Total spend** | | | | | **~$100** |
+
+**$130 unused** vs original $230 budget. Why so cheap: BioCLIP2 saved $30 on Phase 1, RunPod 4090 community pricing has dropped, and we now have local pre-flight checks (29 tests + check_det_dataset) that prevent wasted GPU hours on broken configs.
+
+### After-deadline (paper)
+
+| Date | What |
+|---|---|
+| May 28 | CLEF working notes paper (3-5 pages to CEUR-WS) — REQUIRED for official ranking |
+| Jun 30 | Notification |
+| Jul 6 | Camera-ready |
+| Sep 21-24 | CLEF 2026 Jena, Germany — conference (optional attendance) |
+
+**Note on "official ranking":** Kaggle leaderboard score alone does NOT make you part of the officially published ranking. The May 28 paper is what locks in your position.
+
+### Phase 2 strategy revision (added v5.4 from Apr 30 EOD review)
+
+Original plan called for Kaggle T4 free tier for Phase 2 baselines. With current state:
+
+- Kaggle T4: free, but ~10-12 hr per fold, 9-hr session limit forces awkward checkpoint/resume, no SSH
+- RunPod 4090: ~$0.34-0.50/hr × 3 hr per fold = **$1.50/fold**, no session limits, full SSH
+
+For 3 baseline experiments (~9 GPU-hours total), RunPod 4090 costs ~$3 vs Kaggle T4 free. **Recommended: skip Kaggle T4 entirely, run baselines on RunPod.** Saves ~30 wall-clock hours of waiting + simplifies tooling (one platform, not two). The $3 is rounding error against the $130 unused budget.
+
+This makes B.2.5 (Kaggle Private Dataset upload) optional — defer unless we actually decide to use Kaggle T4 in Phase 2 or earlier in Phase 7 for a cheap-and-cheerful experiment.
+
+### First-submission anchoring rule (codified v5.4)
+
+**The first Kaggle submission MUST be a vanilla YOLOv11m baseline** (Phase 2, around May 2), NOT a BioCLIP2-augmented or PU-trained model. Reasons:
+
+1. **Validates the entire submission pipeline** — `submit.py` round-trip from .pt weights → predictions DataFrame → CSV → upload. A bug here mid-week is catastrophic; finding it on day 1 of submissions is recoverable.
+2. **Anchors the leaderboard** — every later experiment can be compared against a known reference score. "BioCLIP2 added +X mAP over our vanilla baseline" is a much stronger claim than "our final mAP was Y".
+3. **Burns 1 of 10 daily submission slots productively** — the slot was going to be "wasted" on a sanity check anyway; doing it deliberately on day 1 means we KNOW Kaggle's grader works for our format.
+
+**Don't break this rule** even if the BioCLIP2 adapter is ready earlier than expected. Submit baseline first, BioCLIP2 second.
+
+### If behind schedule — explicit drop list
+
+The most common Kaggle failure mode is "spent too long polishing one technique, ran out of time for the high-value ones". To prevent this, here's the explicit drop priority IF wall-clock pressure builds:
+
+**Drop in this order (lowest impact first):**
+
+1. **Phase 4 EXP 4.6 (YOLOv11l larger model)** — typically +0.5-1 mAP, costs ~3 hr. Skip if Phase 3 ran long.
+2. **Phase 4 EXP 4.8 (multi-scale context crops)** — exploratory, no strong prior on payoff.
+3. **Phase 5 EXP 5.2 (pseudo round 2)** — only useful if pseudo round 1 (Soft Teacher in Phase 3) clearly worked.
+4. **Phase 4 EXP 4.7 (RT-DETR)** — ~3 hr, mainly buys ensemble diversity for Phase 7. Skip if Phase 6's 5-fold YOLO ensemble is already strong on its own.
+5. **Phase 7 EXP 7.7 (score calibration)** — typically +0.2-0.5 mAP, costs ~4 hr. Skip if Phase 7 is running into May 7.
+
+**NEVER drop these** (they are the core differentiators):
+- B.0.5 Kaggle Discussion post (HARD GATE — disqualification risk)
+- D.1-D.5 BioCLIP2 (anchors the entire backbone choice)
+- Phase 3 EFL + RFS + Kiryo PU (the imbalance + PU defenses)
+- Phase 4 EXP 4.4 class-aware copy-paste with per-class schedule (sea slug recovery)
+- Phase 7 SAHI (mandatory for 14% low-res test images)
+- Phase 7 WBF ensemble (cheap +1-2 mAP, no architecture changes)
+- Phase 6 5-fold CV (prevents fold-noise misattribution)
+
+**Time-boxing rule:** if any single experiment runs >150% of its estimate, kill it and move on. The next experiment's expected gain almost always beats squeezing the current one.
+
+**Golden rule (unchanged):** One variable changed per experiment. Attribution is impossible otherwise.
 
 ---
 
@@ -480,24 +557,24 @@ SSL pretraining and the inference-time stack help with all three — those are u
 
 ## Phase 0 — EDA and Setup
 
-**Days 1–2 · Local Cursor · No GPU · $0**
+**STATUS: COMPLETE (Apr 28-30, 2026).** All 7 deliverables shipped, all 6 EDA decision rules confirmed triggered, master plan bumped to v5.4 with the deep-review findings. See `notes/phase0_decisions.md` and `notebooks/phase0_eda.ipynb` section 14 for the data-driven design table.
 
-### Two parallel workstreams
+The historical reference below documents the original two-workstream plan. **For Phase 0 outcomes, jump to "Pre-computed findings" and "Decision table derived from EDA" below.**
+
+### Two parallel workstreams (historical — both complete)
 
 **[CURSOR FLAG 7]** Images are NOT in a standard archive and NOT on HuggingFace datasets. Use the provided `download.py` script — it downloads images one-by-one from FathomNet's S3-backed URLs. Do not suggest `datasets.load_dataset()` or `kaggle datasets download` as the path to images — only the JSON annotations come from Kaggle's competition files.
 
-**Stream A — runs overnight unattended:**
-1. Kick off `download.py` against `dataset_train.json`. Let it run. Several hours.
-2. Once train images complete, start `dataset_test.json` download. Another ~1 hour.
-3. Verify downloaded image count matches expected (~6,463 train, ~1,425 test).
+**Stream A — was run overnight Apr 28-29:**
+1. Ran `download.py` against `dataset_train.json` — 6,463 images, 45 GB, several hours.
+2. Then `dataset_test.json` — 1,425 images, ~1 hour.
+3. Final count verified: 7,888 files (6,463 + 1,425) ✓.
 
-**Stream B — you work on this during and after the download:**
-1. EDA on the JSON files (no images needed)
-2. Compute all decision-gating metrics
-3. Build train/val splits, RFS weights, taxonomy tree
-4. Write `phase0_decisions.md` — one-page summary of which differentiators are justified
-
-EDA only needs annotations. Don't wait for image downloads to finish to start computing metrics.
+**Stream B — was done in parallel, completed Apr 30:**
+1. EDA on JSON files (no images needed) — `notebooks/phase0_eda.ipynb`
+2. Computed all decision-gating metrics — see "Decision table derived from EDA" below
+3. Built train/val splits, RFS weights, taxonomy tree — see `data/cv_folds.pkl`, `data/rfs_repeat_factors.pkl`, `configs/taxonomy.py`
+4. Wrote `notes/phase0_decisions.md` — one-page summary of justified differentiators
 
 ### What you compute from JSON alone
 
@@ -927,18 +1004,33 @@ Built into Ultralytics as `hsv_h`, `hsv_s`, `hsv_v`, `degrees`, `flipud`, `flipl
 
 **Design principle:** Standard copy-paste picks random instances. Class-aware copy-paste biases the selection toward rare classes.
 
-**Architecture integration:** Wraps the dataset's `__getitem__`. With probability p=0.5, picks a rare-class instance from a pre-built bank and pastes it into the current training image at a non-overlapping location.
+**Architecture integration:** Wraps the dataset's `__getitem__`. Picks a rare-class instance from a pre-built bank and pastes it into the current training image at a non-overlapping location, with a **per-class probability schedule** (instead of a single global p).
+
+**Per-class probability schedule (locked v5.4 from Phase 0 review):**
+
+Sea slug at 7 instances is "near-pathological" (master plan §"Class imbalance"); a single global probability is wasteful for common classes and insufficient for rare ones. The schedule below is keyed on `class_idx` and lives in `src/augmentations/copy_paste.py`:
+
+| Tier | Count range | # classes | Members (count) | p (paste this class) |
+|---|---|---|---|---|
+| Critical | <30 | 3 | sea slug (7), sea squirt (17), isopod (28) | **0.7-0.9** |
+| Rare | 30-99 | 11 | barnacle, chiton, pyrosome, hydroid, calycophoran siphonophore, larvacean, sea pen, sea snail, bivalve, amphipod, benthic worm | **0.4-0.6** |
+| Mid | 100-999 | 12 | physonect siphonophore, jelly, octopus, squat lobster, soft coral, black coral, sea cucumber, crab, shrimp, sea star, feather star, stony coral | **0.2-0.3** |
+| Common | ≥1000 | 6 | anemone, sponge, brittle star, sea fan, bony fish, urchin | **0.05-0.1** |
+
+3 + 11 + 12 + 6 = 32 ✓. Exact probabilities tuned in this experiment; the table above is the starting point.
+
+See `notes/phase0_decisions.md` "Per-class copy-paste schedule" for the same table with full instance counts.
 
 **Decision criteria:**
 ```
-IF >3 classes have <50 training instances:
-    INCLUDE class-aware copy-paste
+IF >3 classes have <50 training instances:                 // 9 classes; YES
+    INCLUDE class-aware copy-paste with per-class schedule above
 IF copy-paste augmented images look unnatural (pasted crop clearly out of context):
-    REDUCE prob to 0.2
+    REDUCE prob across all tiers proportionally (NOT to a single global value)
 IF rare_class_AP improves > 1 point without frequent_class_AP drop:
-    KEEP
+    KEEP schedule
 ELSE:
-    REDUCE prob or DROP
+    SHIFT down one tier (critical -> rare values, etc.) and re-test
 ```
 
 ### Exp 4.5 — Multi-scale training (~3h)
