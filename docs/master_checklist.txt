@@ -5,9 +5,9 @@
     docs/account_setup.txt   - account / tooling setup details
     docs/runpod_setup.txt    - RunPod rental + per-phase pod recipe
 
-  Last updated: 2026-04-29 (end of day)
-  Days to Kaggle deadline (May 7): 8
-  Days to working notes paper deadline (May 28): 29
+  Last updated: 2026-04-30 (end of day)
+  Days to Kaggle deadline (May 7): 7
+  Days to working notes paper deadline (May 28): 28
 ================================================================================
 
 ORDERING NOTE
@@ -21,8 +21,8 @@ LEGEND
   [x] done       [~] in progress    [ ] todo    [?] verify    [!] blocker
 
 ================================================================================
-  BLOCK A  -  Apr 29 (TODAY) -> Apr 30 (TOMORROW)  ·  setup blockers
-  STATUS as of Apr 29 EOD: 12/15 done. Remaining: A.7, A.8, A.9.
+  BLOCK A  -  Apr 29 -> Apr 30  ·  setup blockers
+  STATUS as of Apr 30 EOD: 15/15 done. Block A is COMPLETE.
 ================================================================================
 
 A.1  ONEDRIVE SYNC DECISION                                          [x] done
@@ -88,9 +88,12 @@ A.8  CURSOR REMOTE-SSH EXTENSION INSTALLED                           [x] done
      User confirmed Apr 30 00:00 PT: extension already installed.
      No further action until A.9 RunPod pod is live.
 
-A.9  RUNPOD ACCOUNT + $100 INITIAL CREDIT + SSH KEY UPLOADED         [ ] 15 min
-     See docs/runpod_setup.txt Part A (5 substeps).
-     Don't deploy a pod yet -- first rental is Phase 3, ~5 days from now.
+A.9  RUNPOD ACCOUNT + $100 INITIAL CREDIT + SSH KEY UPLOADED         [x] done
+     Apr 30 ~22:55 PT: account created, $100 credit added, SSH ed25519
+     keypair generated at $HOME\.ssh\runpod_ed25519, public key uploaded
+     to RunPod -> Settings -> SSH Public Keys (labeled "fathomnet-2026").
+     Pod NOT deployed (per runpod_setup.txt Part G). First rental fires
+     in Phase 3, ~3-5 days from now once BioCLIP2 adapter is shape-checked.
 
 A.10 SNAPSHOT RAW JSONs                                              [x] done
      Apr 29: data\raw\train_dataset.json.bak (8.1 MB) and
@@ -160,12 +163,15 @@ A.15 ADD .gitignore ENTRIES FOR DATA                                  [x] done
      the above.
 
 ================================================================================
-  BLOCK B  -  Apr 29 (TONIGHT) -> Apr 30 (TOMORROW)  ·  finish data + Phase 0
-  STATUS as of Apr 30 00:14 PT: 5/11 done (B.1, B.1.5, B.2, B.3, B.4).
-  Remaining: B.0.5, B.2.5, B.5, B.5.5, B.6, B.7.
-  Overnight build (Apr 30 00:14+ PT): B.5, B.5.5, B.6, B.7 will be
-  drafted in background by the assistant. User reviews + commits in AM.
-  (B.0.5 + B.2.5 are HARD GATES before any submission.)
+  BLOCK B  -  Apr 29 -> Apr 30 EOD  ·  finish data + Phase 0
+  STATUS as of Apr 30 ~23:05 PT: 9/11 done.
+    DONE: B.1, B.1.5, B.2, B.3, B.4, B.5, B.5.5, B.6, B.7
+    REMAINING: B.0.5 (Kaggle Discussion post -- HARD GATE before any
+                      leaderboard submit) and B.2.5 (Kaggle Private
+                      Dataset upload -- only needed if using Kaggle T4
+                      notebooks for Phase 2 baselines).
+    Data pipeline END-TO-END VERIFIED: coco_to_yolo wrote 22,225 labels,
+    Ultralytics check_det_dataset(fold0.yaml) returned OK Apr 30 ~23:03 PT.
 ================================================================================
 
 B.0.5 KAGGLE DISCUSSION POST: external models declaration             [ ] 15 min
@@ -227,7 +233,42 @@ B.4  COMMIT PHASE 0 ARTIFACTS                                        [x] done
      configs/, data/*.pkl, data/class_counts.json, notes/, notebooks/
      pushed to origin/main on github.com/navya2392/fathomnet-2026.
 
-B.5  WRITE src/submit.py HELPER (OWNS cat_id REVERSE MAPPING)        [ ] 1.5 hr
+B.4.5 PHASE 0 DEEP REVIEW + PLAN TWEAKS                               [x] done
+     Apr 30 ~23:20 PT: re-evaluated Phase 0 EDA findings against master
+     plan v5 thresholds. Confirmations and tweaks:
+       * All 6 EDA decision rules confirmed triggered by wide margins
+         (imbalance 818:1 vs t=10; 14 classes <100 inst vs t=5;
+          9 classes <50 inst vs t=3; PU rate 62.5% vs t=50%).
+       * Resolved imgsz tension (EDA says 640, plan says 1280):
+         Phase 4 EXP 4.1 will run as a 640-vs-1280 ablation; both are
+         needed because EDA looks at training objects and plan accounts
+         for test-time low-res images.
+       * Resolved SAHI tension (EDA says optional, plan says mandatory):
+         SAHI is RESOLUTION-CONDITIONAL -- optional for >86% high-res
+         test, mandatory for 14% low-res (720x486) test. Phase 7 (I.2)
+         routes by image dims at inference time.
+       * Per-class copy-paste schedule designed for Phase 4 (EXP 4.4):
+         critical (<30 inst, p=0.7-0.9) | rare (30-99, p=0.4-0.6) |
+         mid (100-999, p=0.2-0.3) | common (>=1000, p=0.05-0.1).
+         3 + 11 + 12 + 6 = 32 classes covered.
+     Artifacts updated:
+       * notebooks/phase0_eda.ipynb -- new section 14 "Top findings ->
+         model design decisions" (table linking findings to interventions).
+         Will become the EDA chapter of the K.1 working notes paper.
+       * notes/phase0_decisions.md -- SAHI clarification + per-class
+         copy-paste schedule + plan-tension notes.
+       * docs/fathomnet_2026_master_plan_v5.md -- v5.4 changelog entry +
+         updated Exp 4.4 section with the per-class table.
+
+B.5  WRITE src/submit.py HELPER (OWNS cat_id REVERSE MAPPING)        [x] done
+     Apr 30 EOD: src/submit.py landed (440 LOC, commit e794d7f). Three
+     core fns + from_ultralytics_results() helper. All 29 unit tests pass
+     in tests/test_submit.py, including the round-trip "feed-GT-as-preds"
+     test that returns mAP=1.0 (proves the local_score path is exact).
+     Boundary cases verified: cat_id 0/12/42 rejected, class_idx 0/11/31
+     -> cat_id 1/13/41 mapping correct. pytest==9.0.3 added to
+     requirements.txt (was missing). Original spec below for reference.
+
      This is NOT explicit in v5 but addresses Failure Mode #1
      (zero-score submission from forgotten cat_id reverse mapping).
      Implement ONCE, import EVERYWHERE. Three functions:
@@ -257,13 +298,22 @@ B.5  WRITE src/submit.py HELPER (OWNS cat_id REVERSE MAPPING)        [ ] 1.5 hr
 
      Wire into every phase's submission code as the only path to a CSV.
 
-B.5.5 BUILD SYNTHETIC sample_submission.template.csv                  [ ] 10 min
-     Since Kaggle doesn't ship one, create a 3-row dummy CSV in
-     data/raw/sample_submission.template.csv with the canonical schema
-     from B.5 above. Use real test image_ids and real category_ids.
-     Use it as the schema reference for validate_submission() unit tests.
+B.5.5 BUILD SYNTHETIC sample_submission.template.csv                  [x] done
+     Apr 30 EOD: docs/sample_submission.template.csv (3 rows, real
+     image_ids 1/2/3, real cat_ids 1/13/41 to exercise gap-handling).
+     Lives in docs/ (not data/raw/) because data/raw/ is gitignored
+     and this file IS the canonical schema reference. Companion doc
+     docs/sample_submission.template.md explains the schema. Used as
+     a fixture in tests/test_submit.py.
 
-B.6  WRITE scripts/coco_to_yolo.py                                   [ ] 1 hr
+B.6  WRITE scripts/coco_to_yolo.py                                   [x] done
+     Apr 30 EOD: scripts/coco_to_yolo.py landed (165 LOC, commit ed36abf).
+     Run real (not dry-run) Apr 30 ~23:00 PT: 6,463 label files written
+     to data/raw/labels/train/, 22,225 total label lines, 0 empty files,
+     0 zero-dim bboxes, 0 out-of-bounds, 0 unknown cat_ids. Layout chosen
+     to match Ultralytics' implicit /images/ <-> /labels/ path swap.
+     Original spec below for reference.
+
      CRITICAL: Ultralytics' built-in convert_coco() does naive
      `category_id - 1` even with cls91to80=False (verified by reading
      Ultralytics 8.4.39 source). For our non-contiguous IDs this would
@@ -273,12 +323,18 @@ B.6  WRITE scripts/coco_to_yolo.py                                   [ ] 1 hr
      and emits data/labels/train/<image_id>.txt with CORRECT 0-31 class
      indices. Run ONCE per data refresh.
 
-B.7  WRITE scripts/make_yolo_fold.py                                 [ ] 30 min
-     Reads data/cv_folds.pkl, emits per-fold image-list txts:
-       data/folds/train_fold0.txt   data/folds/val_fold0.txt
-       ... fold1 ... fold4
-     Each line is an absolute or repo-relative path to an image.
-     fathomnet.yaml's `train`/`val` keys point at these txts in Phase 2+.
+B.7  WRITE scripts/make_yolo_fold.py                                 [x] done
+     Apr 30 EOD: scripts/make_yolo_fold.py landed (130 LOC, commit ed36abf).
+     Generates 5 fold YAMLs + 10 image-list txts in data/folds/.
+     Train/val splits verified: 5,170/1,293 per fold (sums to 6,463 train).
+     32 class names auto-derived from train_dataset.json categories array,
+     reverse-mapped through cat_id_to_idx so YAML order matches label order.
+     POST-FIX (Apr 30 ~23:02 PT): train/val pointers in YAML rewritten as
+     ABSOLUTE paths because Ultralytics resolves them relative to `path:`
+     not the YAML's location, and our fold lists live outside `path:`.
+     Verified Ultralytics check_det_dataset(fold0.yaml) -> OK after fix.
+     Output naming differs from spec: foldN_{train,val}.txt, not
+     {train,val}_foldN.txt -- matches Ultralytics docs convention.
 
 ================================================================================
   BLOCK C  -  Apr 30 - May 1 (Days 3-4)  ·  Phase 2 baselines (FREE)
@@ -687,29 +743,46 @@ From official competition rules (added Apr 29, 2026):
       Apache/BSD/AGPL needs a deliberate decision and writeup disclosure.
 
 ================================================================================
-  TIME-CRITICAL ITEMS  (snapshot as of Apr 30 00:14 PT)
+  TIME-CRITICAL ITEMS  (snapshot as of Apr 30 ~23:05 PT)
 ================================================================================
 
-  Done today (Apr 29 -> early Apr 30):
-    A.5, A.6, A.7, A.8, A.10, A.11, A.12, A.13, A.14, A.15  (Block A: 14/15)
-    B.1, B.1.5, B.2, B.3, B.4                                (Block B: 5/11)
+  Done today (Apr 30, full day):
+    A.9                                                      (Block A: 15/15 DONE)
+    B.5, B.5.5, B.6, B.7                                     (Block B: 9/11)
+    Data pipeline END-TO-END VERIFIED via check_det_dataset(fold0.yaml) -> OK.
 
-  Already done before today:
-    A.1, A.2, A.3, A.4
+  Done earlier in the project (Apr 28-29):
+    A.1-A.8, A.10-A.15
+    B.1, B.1.5, B.2, B.3, B.4
 
-  Next 3 must-do items for Apr 30 (in order, after morning routine):
+  Next must-do items for May 1 (Friday) -- in execution order:
 
-  1. A.9   RunPod account + $100 credit            (~15 min)
-  2. Review overnight build (B.5/B.5.5/B.6/B.7 drafts) and commit
-                                                    (~30 min)
-  3. D.1   Download BioCLIP2 weights from HuggingFace (~15 min)
+  1. B.0.5  Post external-models declaration on Kaggle Discussion (~5 min)
+            HARD GATE: do this BEFORE any leaderboard submission.
+            Draft already in notes/external_models_post.md -- just edit
+            your name in and post. Paste the URL here when done.
 
-  Rules-critical gates (don't skip even if "later"):
-   - B.0.5  Discussion-board declaration of pretrained models
-            (HARD GATE before first Kaggle submission in Block C)
-   - B.2.5  Upload data as Kaggle PRIVATE Dataset
-            (only if you'll use Kaggle notebooks for free T4 baseline runs)
+  2. D.1    Download BioCLIP2 weights from HuggingFace      (~15 min, ~2.5 GB)
+            See notes/phase1_bioclip2_research.md section 7 step 1.
+
+  3. D.2    Smoke-test BioCLIP2 model loading              (~5 min, local)
+            Confirms weights work + gives real shape numbers for D.4.
+
+  4. D.3    Capture YOLOv11 P3/P4/P5 backbone shapes       (~10 min, local)
+            Forward-hook on yolo11m.pt to fill the TODO in research notes.
+
+  5. D.4    Implement bioclip2_yolo.py adapter             (~4-6 hr, local)
+            Option A from notes/phase1_bioclip2_research.md (frozen ViT
+            features + small adapter into YOLO neck).
+
+  6. D.5    Smoke-test 100-step training run on fold 0     (~30 min)
+            On laptop CPU is fine for shape verification only.
+
+  Rules-critical gates (don't skip):
+   - B.0.5  HARD GATE before first leaderboard submit (item 1 above).
    - B.2.5  Upload data as Kaggle PRIVATE Dataset (NOT Public/Unlisted)
+            (only needed if you'll use Kaggle T4 notebooks; can defer
+             if going straight to RunPod for Phase 2 baselines too).
 
-  If you do these, the rest of the plan can proceed without blockers.
+  Once D.4-D.5 land, we're ready for first RunPod rental ~May 2-3.
 ================================================================================
