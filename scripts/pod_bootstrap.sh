@@ -8,17 +8,16 @@
 #   chmod +x scripts/pod_bootstrap.sh
 #   ./scripts/pod_bootstrap.sh
 #
-# Reads expected env vars (all required):
-#   WANDB_API_KEY        -- from https://wandb.ai/authorize
-#   KAGGLE_USERNAME      -- your Kaggle username
-#   KAGGLE_KEY           -- from kaggle.json or settings page
-#   HUGGINGFACE_HUB_TOKEN -- (optional but recommended) hf_... read token
+# Reads expected env vars:
+#   WANDB_API_KEY         -- REQUIRED. From https://wandb.ai/authorize
+#   KAGGLE_API_TOKEN      -- REQUIRED (bearer style, KGAT_...). Modern Kaggle auth.
+#                            (Legacy fallback: set KAGGLE_USERNAME + KAGGLE_KEY instead.)
+#   HUGGINGFACE_HUB_TOKEN -- OPTIONAL. hf_... read token; just removes rate-limit warnings.
 #
 # Set these BEFORE running the script:
-#   export WANDB_API_KEY=...
-#   export KAGGLE_USERNAME=navya2392
-#   export KAGGLE_KEY=...
-#   export HUGGINGFACE_HUB_TOKEN=...
+#   export WANDB_API_KEY=wandb_v1_...
+#   export KAGGLE_API_TOKEN=KGAT_...
+#   export HUGGINGFACE_HUB_TOKEN=hf_...    # optional
 
 set -euo pipefail
 
@@ -48,8 +47,10 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 
 step "0/9  Verifying environment + GPU"
 require_env WANDB_API_KEY
-require_env KAGGLE_USERNAME
-require_env KAGGLE_KEY
+if [[ -z "${KAGGLE_API_TOKEN:-}" ]] && { [[ -z "${KAGGLE_USERNAME:-}" ]] || [[ -z "${KAGGLE_KEY:-}" ]]; }; then
+    echo "ERROR: set either KAGGLE_API_TOKEN (bearer) OR (KAGGLE_USERNAME + KAGGLE_KEY)."
+    exit 2
+fi
 nvidia-smi || { echo "ERROR: nvidia-smi failed -- no GPU?"; exit 2; }
 python -c "import torch; assert torch.cuda.is_available(), 'no CUDA'; print(f'torch={torch.__version__}  cuda={torch.version.cuda}  device={torch.cuda.get_device_name(0)}')"
 
@@ -59,12 +60,16 @@ pip install -r requirements.txt
 echo "Pip install complete."
 
 step "2/9  Configuring credentials"
-mkdir -p ~/.kaggle
-cat > ~/.kaggle/kaggle.json <<EOF
+if [[ -n "${KAGGLE_API_TOKEN:-}" ]]; then
+    echo "Using KAGGLE_API_TOKEN (bearer); the kaggle CLI picks this up automatically."
+else
+    mkdir -p ~/.kaggle
+    cat > ~/.kaggle/kaggle.json <<EOF
 {"username":"${KAGGLE_USERNAME}","key":"${KAGGLE_KEY}"}
 EOF
-chmod 600 ~/.kaggle/kaggle.json
-echo "Kaggle creds written to ~/.kaggle/kaggle.json"
+    chmod 600 ~/.kaggle/kaggle.json
+    echo "Legacy kaggle.json written to ~/.kaggle/kaggle.json"
+fi
 wandb login --relogin "${WANDB_API_KEY}"
 echo "W&B logged in."
 
