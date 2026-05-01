@@ -59,6 +59,29 @@ A.5  WEIGHTS & BIASES (W&B) ACCOUNT + API KEY                        [x] done
      Re-run scripts/wandb_smoke_test.py from RunPod/Kaggle to verify wandb
      works there before kicking off a multi-hour training job.
 
+A.5.5 HUGGING FACE READ TOKEN  (recommended, optional)               [ ] 5 min
+     Why: BioCLIP2 download (D.1) emitted "anonymous request" warnings.
+     Without a token:
+       - Anonymous rate limit (~10 req/hr per IP)
+       - Slower downloads (lower priority queue)
+       - Cannot access "gated" models (none in our current plan, but
+         SAM, DINOv2, LLaMA-vision etc. would require it if added later)
+     With a token:
+       - Higher rate limits (1000+ req/hr)
+       - Cleaner audit trail in HF activity log
+       - Future-proof for any gated model in stretch goals
+     Steps:
+       1. Go to https://huggingface.co/settings/tokens
+       2. New token -> Type=Read -> any name (e.g., "fathomnet-2026")
+       3. Copy the token (starts with "hf_...")
+       4. Paste into .env as: HUGGINGFACE_HUB_TOKEN=hf_<your_token>
+       5. (Optional) Set as Windows User env var so it persists:
+          [Environment]::SetEnvironmentVariable("HUGGINGFACE_HUB_TOKEN", "hf_...", "User")
+       6. Verify: python -c "from huggingface_hub import HfApi; print(HfApi().whoami())"
+          Should print your HF username + email instead of erroring.
+     If skipped: BioCLIP2 download still worked tonight; this just removes
+     warnings and prepares for any future model needs.
+
 A.6  COPY .env.example -> .env                                       [x] done
      Apr 29: .env created with real KAGGLE_API_TOKEN + WANDB_API_KEY +
      WANDB_ENTITY=navya2392-usc + WANDB_PROJECT=fathomnet-2026.
@@ -346,46 +369,107 @@ B.7  WRITE scripts/make_yolo_fold.py                                 [x] done
      {train,val}_foldN.txt -- matches Ultralytics docs convention.
 
 ================================================================================
-  BLOCK C  -  Apr 30 - May 1 (Days 3-4)  ·  Phase 2 baselines (FREE)
+  BLOCK C  -  May 1-2 (Days 3-4)  ·  Phase 2 baselines + 5-WAY MULTI-INIT BAKE-OFF
+  REVISED v5.5 (May 1 ~00:30 PT): aggressive-mode upgrade
 ================================================================================
 
-  Reference: v5 plan lines 479-524.  Hardware: Kaggle FREE T4 (no $ spent).
-  Goal: establish a leaderboard reference + catch the cat_id-mapping bug
-        early when stakes are low.
+  Reference: master_plan_v5.md "Phase 2 -- Baselines and First Submission"
+  section + v5.5 changelog.
+  Hardware: RunPod RTX 4090 community (~$10 total, NOT Kaggle T4 -- v5.4
+  decision; Kaggle T4 wall-clock cost > RunPod $ cost).
+  Goal: anchor the leaderboard with vanilla baseline AND pick the best
+        starting checkpoint from 5 candidates (this is the Phase 2 v5.5
+        differentiator -- most teams skip multi-init and lose 0.05+ mAP
+        for free).
+  W&B: every run goes to entity=navya2392-usc, project=fathomnet-2026,
+       tags=["phase2", "<exp_id>", "<init_name>"] (see W1-W6 protocol).
 
-C.1  CREATE KAGGLE NOTEBOOK FOR PHASE 2 BASELINE                     [ ] 30 min
-     Kaggle's web UI -> "New Notebook" attached to fathomnet-2026 dataset.
-     Enable GPU (T4) in settings. Pip install ultralytics, then read images
-     via the COCO JSON.
+C.1  DEPLOY RUNPOD RTX 4090 POD + CLONE REPO                         [ ] 20 min
+     1. RunPod Console -> Community Cloud -> RTX 4090 (24 GB VRAM)
+     2. Image: pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+     3. Volume: 100 GB, attach SSH key (fathomnet-2026 from A.9)
+     4. Once running: ssh -i $HOME/.ssh/runpod_ed25519 root@<ip> -p <port>
+     5. git clone https://github.com/navya2392/fathomnet-2026
+     6. scp -r data/raw -> /workspace/  (the 45 GB images; ~10 min upload)
+     7. python -m venv venv ; source venv/bin/activate ; pip install -r requirements.txt
+     8. python -c "from huggingface_hub import snapshot_download; snapshot_download('imageomics/bioclip-2', local_dir='weights/bioclip2')"
+     9. python scripts/download_marine_models.py   # NEW v5.5
+     10. python -m src.bioclip2_yolo            # smoke test on the pod
+     COST: ~10 min idle while uploading data = ~$0.08
+     Pod stays running for entire Block C (~12 hr). Stop after C.7.
 
-C.2  EXP 2.1 - YOLOv11n NANO SANITY (10 epochs, ~30 min)             [ ] 30 min
-     Just verify the pipeline runs end-to-end. Don't tune. Don't submit.
+C.1.5 BUILD INIT-CANDIDATE WEIGHT PATH MAP                           [ ] 10 min
+     v5.5 NEW. Confirm all 5 candidate inits are accessible:
+       weights/bioclip2/                          # for init #2 (already downloaded D.1)
+       weights/marine_models/megalodon.pt          # for init #3 (D.7)
+       weights/marine_models/mbari_315k.pt         # for init #4 (D.8)
+       weights/marine_models/megafishdetector.pt   # for init #5 (D.9)
+     yolo11m.pt is auto-downloaded by Ultralytics on first use (init #1).
 
-C.3  EXP 2.2 - YOLOv11m BASELINE (50 epochs, imgsz=640, ~2 hr)       [ ] 2 hr
-     This is your reference run. Save weights as best_baseline.pt.
-     Compute val mAP@[.50:.95] on cv_folds.pkl fold 0 val set.
+C.2  EXP 2.1 - YOLOv11n NANO SANITY (10 epochs, ~10 min on 4090)     [ ] 15 min
+     python scripts/train_phase2_baseline.py --init yolo11n.pt --epochs 10 --imgsz 640 --fold 0 --name p2_smoke_yolo11n
+     Just verify the pipeline runs end-to-end on real data. No submission yet.
+     Expected val mAP@[.50:.95] after 10 epochs: 0.05-0.12.
 
-C.4  SUBMIT FIRST CSV TO KAGGLE                                      [!] critical
-     Use src/submit.py to convert YOLO predictions -> CSV.
-     Validate against sample_submission.csv first (B.5 helper).
-     If LB mAP < 0.05, your cat_id mapping is broken -- STOP and fix.
-     Record LB score as your STARTING LINE.
-     NOTE: Kaggle competition phase usually limits 5 submissions/day --
-     budget them.
+C.3  EXP 2.2 - YOLOv11m + COCO BASELINE (50 epochs, imgsz=640, ~2 hr) [ ] 2 hr
+     python scripts/train_phase2_baseline.py --init yolo11m.pt --epochs 50 --imgsz 640 --fold 0 --name p2_baseline_yolo11m_coco
+     This is the v5.5 vanilla anchor (init candidate #1 in the bake-off).
+     Save weights to /workspace/weights/runs/p2_baseline_yolo11m_coco/best.pt
+     Submit this to Kaggle as the FIRST anchor (per first-submission rule).
 
-C.5  EXP 2.3 - BACKBONE BAKE-OFF (REDUCED to 2-way)                  [ ] 1 hr
-     Same training, two different starting weights (down from 3 since
-     Path 3 SSL was removed in Block D decision-lock):
-       (a) ImageNet (Ultralytics default)
-       (b) BioCLIP2 (HuggingFace: imageomics/bioclip-2, MIT license)
-     Expected: BioCLIP2 wins by +2 to +5 mAP. If ImageNet wins, double-check
-     the BioCLIP2 adapter from Block D for a wiring bug before accepting
-     the result. Pick the winner -> use for ALL later phases.
+C.4  SUBMIT FIRST CSV TO KAGGLE  (anchors leaderboard)               [!] critical
+     1. python scripts/predict_test_set.py --weights weights/runs/p2_baseline_yolo11m_coco/best.pt --out submissions/p2_baseline.csv
+     2. python -c "from src.submit import validate_submission; validate_submission('submissions/p2_baseline.csv', test_json_path='data/raw/test_dataset.json')"
+        MUST pass without raising. Warnings are OK.
+     3. kaggle competitions submit -c fathomnet-2026 -f submissions/p2_baseline.csv -m "Phase 2 vanilla yolo11m+COCO baseline (anchoring)"
+     4. Wait for LB score. Record in notes/phase2_results.md as STARTING LINE.
+     5. If LB mAP < 0.05: cat_id mapping is broken (FLAG 1). STOP, run
+        tests/test_submit.py round-trip test, debug.
+     R8: 10 submissions/day. This is #1 of the day; we have 9 more for the
+     bake-off winners (next slots are best-of-5 from C.5).
 
-C.6  COMMIT BASELINE WEIGHTS + LB SCORE                              [ ] 5 min
-     Add notes/phase2_baseline.md with: val mAP, LB mAP, winning backbone,
-     any oddities. Commit weights to /workspace on RunPod (NOT to git --
-     they're too big; save to a separate weights/ folder, gitignored).
+C.5  EXP 2.3 - 5-WAY MULTI-PRETRAINED-INIT BAKE-OFF (v5.5 NEW)       [!] 6-8 hr
+     v5.5 expansion: was 2-way (ImageNet vs BioCLIP2), now 5-way.
+     Run THE killer differentiator script:
+       python scripts/eval_pretrained_inits.py --epochs 10 --fold 0 --imgsz 640
+     This trains all 5 candidate inits identically for 10 epochs and emits a
+     ranked table by val mAP@[.50:.95]. Auto-saves results to
+     notes/phase2_init_bakeoff.md. Each init takes ~50-60 min on 4090, so
+     total ~5 hr GPU.
+     Candidates (see master plan v5.5 EXP 2.3 table):
+       (1) yolo11m.pt + COCO            (vanilla, already did in C.3)
+       (2) yolo11m + BioCLIP2 backbone  (D.4 adapter)
+       (3) mbari-megalodon-yolov8x.pt   (FathomNet single-class)
+       (4) mbari_315k_yolov8.pt         (FathomNet multi-class -- STRONGEST PRIOR)
+       (5) megafishdetector_v0_yolov5m  (fish-specific)
+     Decision rule: take TOP 2 by val mAP at epoch 10. They both promote
+     to Phase 6 5-fold ensemble (architectural diversity).
+     IF rank[0].val_mAP < 0.15: pipeline bug, STOP and debug.
+     IF rank[0] vs rank[1] gap < 0.02: also keep rank[2] for ensemble.
+     IF rank[0] vs rank[1] gap > 0.05: drop rank[1], use only rank[0].
+
+C.5.1 PROMOTE TOP 2 TO FULL 50-EPOCH TRAINING                        [ ] 4-5 hr
+     For each of the top 2 inits from C.5:
+       python scripts/train_phase2_baseline.py --init <winner_path> --epochs 50 --imgsz 640 --fold 0 --name p2_full_<init_name>
+     ~2 hr each on 4090. Save best.pt for each.
+     Submit BOTH to Kaggle (uses 2 of remaining 9 daily slots) and record
+     LB scores. The LB-leading init becomes PRIMARY (heaviest investment
+     in Phase 3-7), the other becomes SECONDARY (parallel track in Phase 6).
+
+C.6  W&B PUBLIC DASHBOARD LINK                                       [ ] 5 min
+     Make the W&B project public-readable so the working notes paper can
+     cite charts directly: https://wandb.ai/navya2392-usc/fathomnet-2026
+     Settings -> Privacy -> "Allow team members to make this project public"
+     (or, leave private and link via a sharable read-only URL in K.1)
+
+C.7  COMMIT PHASE 2 ARTIFACTS + STOP THE POD                          [ ] 15 min
+     1. Add notes/phase2_results.md with: per-init val mAP, LB mAP for
+        the 3 submissions, winning init, any oddities.
+     2. Commit notes/* AND scripts/* AND src/* (NOT weights/, gitignored).
+     3. scp /workspace/weights/runs/p2_full_<primary>/best.pt ./weights/local_backups/
+        scp /workspace/weights/runs/p2_full_<secondary>/best.pt ./weights/local_backups/
+     4. RUNPOD STOP THE POD (R5 cost discipline). Volume keeps weights
+        for Phase 3 reuse, ~$5/month parked.
 
 ================================================================================
   BLOCK D  -  Apr 30 (~1-2 hr)  ·  Phase 1 backbone setup (LOCKED: BIOCLIP2)
@@ -467,6 +551,45 @@ D.6  COMMIT THE ADAPTER + CONFIG                                     [ ] 1 min
      git push
      Do NOT commit weights/bioclip2/ (it's in .gitignore via weights/).
 
+--------------------------------------------------------------------------------
+  BLOCK D  --  v5.5 EXPANSION  -  Marine pretrained model setup
+--------------------------------------------------------------------------------
+
+  v5.5 NEW (May 1 ~00:30 PT). Per host clarification of Rule 6, FathomNet
+  Megalodon and Megafishdetector (and similar publicly-available marine
+  detection models) are explicitly allowed for initialization with
+  disclosure. We are using ALL three big ones to maximize our chance of
+  picking the best Phase 2 starting checkpoint.
+  HARD GATE: B.0.5 EDIT to add these models must be live in the Kaggle
+  Discussion thread BEFORE C.5 runs ANY of init candidates 3/4/5.
+
+D.7  DOWNLOAD FATHOMNET MEGALODON                                    [ ] 5 min
+     python -c "from huggingface_hub import snapshot_download; \
+       snapshot_download('FathomNet/megalodon', local_dir='weights/marine_models/megalodon')"
+     Verify: ls weights/marine_models/megalodon/ -- expect a .pt file
+     (~270 MB). The script will pick this up; if HF gating prompts for a
+     token, set HF_TOKEN env var (A.5.5 optional task).
+
+D.8  DOWNLOAD MBARI 315k DETECTOR                                    [ ] 5 min
+     python -c "from huggingface_hub import snapshot_download; \
+       snapshot_download('FathomNet/MBARI-315k-yolov8', local_dir='weights/marine_models/mbari_315k')"
+     Verify: ls weights/marine_models/mbari_315k/ -- expect a .pt file
+     (~140 MB) plus optionally a config and class-name file.
+
+D.9  DOWNLOAD MEGAFISHDETECTOR                                       [ ] 10 min
+     Megafishdetector is hosted on GitHub releases, not HF. See
+     scripts/download_marine_models.py for the exact URL. Falls back to
+     `wget` from the GitHub release tarball if HF mirror is unavailable.
+     Verify: ls weights/marine_models/megafishdetector/ -- expect a .pt
+     file (~40 MB for yolov5m).
+
+D.10 ONE-SHOT DOWNLOAD HELPER                                        [ ] 1 min
+     scripts/download_marine_models.py wraps D.7+D.8+D.9 into one command
+     for use on a fresh RunPod pod (avoids manual snapshot_download calls
+     on each redeploy). Run on the pod after C.1:
+       python scripts/download_marine_models.py
+     Idempotent: skips already-downloaded files. Total ~450 MB.
+
 (BLOCK D PATH 3 ITEMS REMOVED: D.2-D.7 from v4 of this checklist had
  RunPod A100 deployment, SimCLR training, DINOv2 fine-tune. All skipped
  per the locked decision above. If timeline opens up after May 4,
@@ -484,28 +607,55 @@ E.1  DEPLOY RUNPOD RTX 4090 pod (Community)                          [ ] 10 min
      If you already deployed for Phase 1, just reuse the same persistent
      volume on a new pod with a different GPU.
 
-E.2  EXP 3.1 - ESTIMATE PU PRIOR pi  (CPU, no GPU)                   [ ] 30 min
-     v5 lines 549-557. Compute pi ~ annotated_image_rate * mean_annotated_area.
-     Save to notes/phase3_pi_estimate.md.
+E.2  EXP 3.1 - ESTIMATE PU PRIOR pi  (CPU, no GPU)                   [~] 30 min
+     v5.5 STATUS (May 1): scripts/build_pu_prior.py WRITTEN.
+     CLI: python scripts/build_pu_prior.py
+     Reads data/raw/train_dataset.json, computes pi via
+     src.pu_loss.estimate_pu_prior(), writes Markdown report to
+     notes/phase3_pi_estimate.md. Runs on CPU in ~30 sec.
+     Use the resulting pi as KiryoPULoss(pi=...) in E.3.
+     v5 lines 549-557.
 
-E.3  EXP 3.2 - KIRYO PU OBJECTNESS LOSS  (~2 hr)                     [ ] 2 hr
-     Implement src/pu_loss.py per v5 lines 559-581.
+E.3  EXP 3.2 - KIRYO PU OBJECTNESS LOSS  (~2 hr)                     [~] 2 hr
+     v5.5 STATUS (May 1): src/pu_loss.py SKELETON + 13 unit tests written.
+     `KiryoPULoss` and `estimate_pu_prior()` math is unit-tested on CPU.
+     INTEGRATION REMAINING: subclass `v8DetectionLoss`, replace its
+     objectness BCE with KiryoPULoss(pi=estimate_pu_prior(...)). ~50 LOC
+     of Ultralytics-specific glue.
      Decision rule: include if Phase 0 single-cat-rate > 40%.
      Success signal: val mAP improves >= 1 point AND precision stable.
 
-E.4  EXP 3.3 - EQUALIZED FOCAL LOSS (EFL)  (~2 hr)                   [ ] 2 hr
-     Implement src/efl_loss.py per v5 lines 583-609.
-     Decision rule: include (Phase 0 imbalance ratio is 817:1, > 50 trigger).
+E.4  EXP 3.3 - EQUALIZED FOCAL LOSS (EFL)  (~2 hr)                   [~] 2 hr
+     v5.5 STATUS (Apr 30 overnight): src/efl_loss.py SKELETON + 9 unit
+     tests written. Per-class gamma + EMA gradient ratio math is tested.
+     INTEGRATION REMAINING: replace per-class BCE in v8DetectionLoss
+     classification head with EqualizedFocalLoss. Decision rule: include
+     (Phase 0 imbalance ratio is 817:1, > 50 trigger).
      Success signal: rare-class AP +2-5 pts, frequent-class AP within 1 pt.
 
-E.5  EXP 3.4 - REPEAT FACTOR SAMPLING (RFS)  (~1 hr)                 [ ] 1 hr
-     Implement src/rfs_sampler.py per v5 lines 611-642.
-     Use data/rfs_repeat_factors.pkl from Phase 0.
+E.5  EXP 3.4 - REPEAT FACTOR SAMPLING (RFS)  (~1 hr)                 [~] 1 hr
+     v5.5 STATUS (May 1): src/rfs_sampler.py FULL implementation +
+     11 unit tests. `compute_repeat_factors()` matches LVIS paper formula;
+     `RepeatFactorSampler` uses stochastic rounding, supports set_epoch().
+     INTEGRATION REMAINING: subclass Ultralytics' DetectionTrainer to
+     swap in this sampler in `_setup_train()`. ~30 LOC.
+     Use data/rfs_repeat_factors.pkl from Phase 0 OR re-compute via
+     `compute_repeat_factors(train_json, threshold=0.05)`.
 
-E.6  EXP 3.5 - SOFT TEACHER  (~4 hr)                                 [ ] 4 hr
-     v5 lines 643-680. Start with poor-man's version (2 rounds of pseudo-
-     labeling, EMA-averaged between rounds). Upgrade only if positive signal.
-     File: src/soft_teacher.py.
+E.6  EXP 3.5 - SOFT TEACHER  (~4 hr)                                 [~] 4 hr
+     v5.5 STATUS (May 1): src/soft_teacher.py SKELETON + 12 unit tests.
+     `apply_pseudo_label_filters()` (4-stage filter pipeline) and
+     `merge_gt_and_pseudo()` and `update_ema_teacher()` are implemented
+     and tested. The 4 subtle merge correctness traps (suppress class
+     already GT, suppress IoU > 0.3 with GT, unique annotation_ids,
+     idx->cat_id reverse mapping) are all under test.
+     INTEGRATION REMAINING: scripts/run_soft_teacher_round.py orchestration
+     - run trained model in inference mode on train images
+     - parse predictions into PseudoLabel objects
+     - apply filters + merge
+     - kick off retrain on combined json
+     v5 lines 643-680. Start with poor-man's version (2 rounds, EMA between
+     rounds). Upgrade to full online Soft Teacher only if positive signal.
 
 E.7  EXP 3.6 - COMBINED EFL + RFS + KIRYO + SOFT TEACHER  (~3 hr)    [ ] 3 hr
      v5 line 682-684. Phase 3 graduation experiment. Save best config.
@@ -533,18 +683,36 @@ F.1  DEPLOY RUNPOD RTX 4090 pod (Community)                          [ ] 10 min
 F.2  EXP 4.1 - imgsz=1280 vs 640  (~2 hr)                            [ ] 2 hr
      v5 lines 707-720. Phase 0 will recommend imgsz=1280 (small obj > 25%).
 
-F.3  EXP 4.2 - UNDERWATER PREPROC (gray-world + CLAHE)  (~2 hr)      [ ] 2 hr
+F.3  EXP 4.2 - UNDERWATER PREPROC (gray-world + CLAHE)  (~2 hr)      [~] 2 hr
+     v5.5 STATUS (May 1): src/underwater_preproc.py FULL implementation +
+     14 unit tests. gray_world_balance(), apply_clahe(),
+     underwater_preprocess() pipeline, needs_underwater_preproc()
+     heuristic. Tests confirm gray-world removes synthetic blue cast and
+     CLAHE boosts contrast on flat images.
+     INTEGRATION REMAINING: register as Ultralytics Albumentations transform
+     in dataset YAML, OR pre-process all images once into data/preprocessed/
+     and point the YAML there. Latter is cleaner (one-time cost) but
+     duplicates ~50 GB of disk. Decide on the pod.
      v5 lines 722-748. Phase 0 cell 12 outputs the gray-world / CLAHE
-     decision flags. File: src/underwater_preproc.py.
+     decision flags.
 
 F.4  EXP 4.3 - UNDERWATER AUGMENTATION  (~2 hr)                      [ ] 2 hr
      v5 lines 750-760. Aggressive Ultralytics hsv_h/hsv_s/hsv_v/degrees.
      Always include.
 
-F.5  EXP 4.4 - CLASS-AWARE COPY-PASTE  (~3 hr)                       [ ] 3 hr
-     v5 lines 762-780. File: src/copy_paste.py. Pre-build rare-class
-     instance bank from train_dataset.json + actual image crops. p=0.5.
-     Special case: sea slug (7 instances) -- p=0.9 just for this class.
+F.5  EXP 4.4 - CLASS-AWARE COPY-PASTE  (~3 hr)                       [~] 3 hr
+     v5.5 STATUS (May 1): src/copy_paste.py FULL implementation + 11 tests.
+     - InstanceBank holds GT crops indexed by class
+     - build_instance_bank(train_json, image_root) populates from disk
+     - build_default_schedule(instance_counts) -> per-class probability
+       (critical/rare/mid/common tiers automatically applied)
+     - class_aware_copy_paste(img, boxes, labels, bank, schedule) returns
+       augmented image + bboxes; respects max_iou with existing GT
+     - Pickle round-trip works for caching the bank
+     INTEGRATION REMAINING: subclass Ultralytics dataset / custom transform
+     to call class_aware_copy_paste() per __getitem__. ~50 LOC.
+     v5 lines 762-780. p=0.5 default; sea slug (7 instances) auto-gets
+     p=0.85 (critical tier in DEFAULT_TIER_PROBABILITIES).
 
 F.6  EXP 4.5 - MULTI-SCALE TRAINING  (~3 hr)                         [ ] 3 hr
      v5 lines 782-798. Ultralytics multi_scale=True, scale=(0.3, 1.0).
@@ -552,16 +720,45 @@ F.6  EXP 4.5 - MULTI-SCALE TRAINING  (~3 hr)                         [ ] 3 hr
 F.7  EXP 4.6 - YOLOv11l (LARGER MODEL)  (~3 hr)                      [ ] 3 hr
      v5 lines 800-810. Only if YOLOv11m plateaus.
 
-F.8  EXP 4.7 - RT-DETR  (~3 hr)                                      [ ] 3 hr
-     v5 lines 812-822. Need RT-DETR within 2 mAP of YOLO solo to include
-     in Phase 7 ensemble.
+F.8  EXP 4.7 - RT-DETR-X (v5.5 UPGRADED from RT-DETR-l)  (~3 hr)     [ ] 3 hr
+     v5 lines 812-822 + v5.5 changelog. Need RT-DETR-X within 2 mAP of
+     YOLO solo to include in Phase 7 ensemble. Architectural diversity
+     (transformer head vs CNN head) buys uncorrelated errors -> ensemble
+     gain even at slightly lower individual mAP.
 
 F.9  (OPTIONAL) EXP 4.8 - MULTI-SCALE CONTEXT CROPS  (~2 hr)         [ ] optional
      v5 lines 824-836. Only if confusion matrix shows habitat-related errors.
 
+F.9.5 EXP 4.9 - OPEN-VOCAB DETECTION FOR RARE CLASSES (v5.5 NEW)     [ ] 4-6 hr
+     Use GroundingDINO and/or OWL-ViT-Large to specifically detect the
+     14 rare classes (< 100 train instances) by prompting with class
+     names. Expected payoff: even 30-50% recall on sea slug / isopod
+     gives a non-zero P/R signal where YOLO is starved.
+     Two integration modes (try both):
+       (a) PSEUDO-LABEL MODE: Run open-vocab on TRAIN images (not test),
+           merge confident predictions (conf > 0.5) with original GT for
+           rare classes only. Re-train YOLO. Cost: ~3 hr open-vocab
+           inference + ~2 hr re-train = $7-10.
+       (b) ENSEMBLE MODE (Phase 7): Run on TEST images at submission time,
+           feed predictions into WBF for rare classes only. Cost: ~1 hr
+           inference per submission.
+     Decision rule: include in final ensemble if (a) and/or (b) improves
+     val mAP for rare classes by >= 0.02 (moves the per-class AP needle
+     for sea slug / isopod). If neither helps, abandon -- this is a
+     high-variance technique.
+     v5.5 STATUS (May 1): scripts/open_vocab_inference.py WRITTEN.
+     OWL-ViT path is fully implemented via HF transformers. Default
+     queries map for the 7 critical-tier classes. Outputs JSON of
+     PseudoLabel objects ready for src.soft_teacher.merge_gt_and_pseudo().
+     Has not yet been run end-to-end -- needs HF transformers installed
+     (`pip install transformers`) and a pod.
+
 F.10 PHASE 4 EXIT - PICK 1-2 BEST CONFIGS                            [ ] 30 min
      These seed Phase 6 full training.
      COMMIT notes/phase4_results.md with the ablation table.
+     v5.5 NOTE: PRIMARY init from C.5.1 + winning Phase 4 config combo
+     becomes the Phase 6 seed. SECONDARY init (also from C.5.1) trains
+     on the SAME winning Phase 4 config in parallel.
 
 F.11 SUBMIT BEST PHASE 4 CSV TO KAGGLE                               [ ] 10 min
 
@@ -579,7 +776,16 @@ G.1  GENERATE CONFUSION MATRIX FROM PHASE 3/4 BEST                   [ ] 30 min
      If > 40% of errors are within-phylum (use configs/taxonomy.py to check)
      -> include hierarchical loss.
 
-G.2  EXP 5.1 - HIERARCHICAL LOSS  (~4 hr)                            [ ] 4 hr
+G.2  EXP 5.1 - HIERARCHICAL LOSS  (~4 hr)                            [~] 4 hr
+     v5.5 STATUS (May 1): src/hierarchical_loss.py SKELETON + 11 tests.
+     HierarchicalLoss(num_classes, class_to_group, num_groups,
+     group_weight=0.3) implements L_species + group_weight * L_group
+     where L_group is CE on group probabilities (sum of per-class probs
+     within each group). Uses configs/taxonomy.GROUPS.
+     INTEGRATION REMAINING: replace v8DetectionLoss classification head's
+     BCE with HierarchicalLoss, OR add group-loss as auxiliary term with
+     its own coefficient (simpler, less risk of regressing species AP).
+     Refine configs/taxonomy.py with WoRMS lookups (G.1 prerequisite).
      v5 lines 854-878. File: src/hierarchical_loss.py.
      Refine configs/taxonomy.py with WoRMS lookups before this step --
      the Phase 0 stub is a coarse approximation.
@@ -637,7 +843,18 @@ H.8  STOP (NOT TERMINATE) THE POD                                    [ ] 30 sec
 
 I.1  DEPLOY RUNPOD RTX 4090 pod (Community)                          [ ] 10 min
 
-I.2  IMPLEMENT src/sahi_inference.py (RESOLUTION-CONDITIONAL)        [ ] 2 hr
+I.2  IMPLEMENT src/sahi_inference.py (RESOLUTION-CONDITIONAL)        [~] 2 hr
+     v5.5 STATUS (May 1): src/sahi_inference.py WRITTEN.
+     - SahiConfig dataclass with v5-recommended defaults
+     - load_sahi_model(weights, image_size, device) lazy-loads sahi pkg
+     - predict_one_sahi() runs sliced + standard prediction with merge
+     - predict_one_plain() runs plain Ultralytics-via-SAHI
+     - predict_resolution_conditional() picks plain vs SAHI by image
+       max(h, w) >= 1024 threshold (v5 plan recommended split).
+     INSTALL: pip install sahi
+     INTEGRATION REMAINING: scripts/predict_test_set_sahi.py wrapper
+     that maps over the test set and writes the standard 8-col CSV.
+     ~50 LOC of glue (mostly copy from scripts/predict_test_set.py).
      v5 lines 962-991. Detect image dims at inference; pick slice size:
        w >= 1920 -> slice 640x640
        w == 720  -> slice 320x320 (or skip SAHI)
@@ -652,7 +869,13 @@ I.4  EXP 7.2 - BEST SINGLE MODEL + SAHI ONLY  (~1 hr)                [ ] 1 hr
 I.5  EXP 7.3 - BEST SINGLE + SAHI + TTA  (~1 hr)                     [ ] 1 hr
      Combined inference stack. Submit.
 
-I.6  EXP 7.4 - 5-FOLD YOLO ENSEMBLE (WBF) + SAHI + TTA  (~4 hr)      [ ] 4 hr
+I.6  EXP 7.4 - 5-FOLD YOLO ENSEMBLE (WBF) + SAHI + TTA  (~4 hr)      [~] 4 hr
+     v5.5 STATUS (May 1): scripts/wbf_ensemble.py WRITTEN.
+     CLI: python scripts/wbf_ensemble.py --submissions a.csv b.csv c.csv \
+              --weights 1.0 1.0 1.0 --out fused.csv
+     Uses ensemble_boxes pip package (Solovyev's reference impl).
+     Auto-validates output via src.submit.validate_submission().
+     INSTALL: pip install ensemble-boxes
      v5 lines 1004-1018. WBF, NOT NMS. File: src/ensemble.py.
      Submit.
 
@@ -660,7 +883,17 @@ I.7  EXP 7.5 - 6-MODEL ENSEMBLE (+RT-DETR) + SAHI + TTA  (~4 hr)     [ ] 4 hr
      RT-DETR weight grid: {0.6, 0.8, 1.0, 1.2, 1.4} on val.
      Lock the weight that maximizes val mAP@[.50:.95]. Submit.
 
-I.8  EXP 7.6 - PER-CLASS NMS IoU TUNING  (~3 hr, CPU-only)           [ ] 3 hr
+I.8  EXP 7.6 - PER-CLASS NMS IoU TUNING  (~3 hr, CPU-only)           [~] 3 hr
+     v5.5 STATUS (May 1): scripts/per_class_nms_tuning.py WRITTEN.
+     - per_class_nms() applies NMS with per-class IoU thresholds
+     - evaluate_per_class_ap() computes per-class mAP@[.50:.95] via
+       pycocotools (the reference implementation; matches Kaggle's metric)
+     - Sweeps a candidate-threshold grid (default {0.3,0.4,0.5,0.6,0.7})
+     - Outputs per-class best-threshold map to notes/phase7_per_class_nms.json
+       and Markdown summary to notes/phase7_per_class_nms.md
+     INSTALL: pip install pycocotools
+     INTEGRATION REMAINING: at submission time, load the JSON map and
+     pass per-class thresholds to per_class_nms() before writing CSV.
      v5 lines 1025-1048. Sweep NMS IoU per class on val predictions.
      File: src/per_class_nms.py. Lock per-class thresholds.
 
@@ -762,6 +995,52 @@ From v5 plan ("Global Operational Rules" section):
   R5  STOP RUNPOD PODS WHEN IDLE. Running = charging even at rest.
   R6  SUBMIT EARLY AND OFTEN. Every submission validates the pipeline.
   R7  TRACK mAP@[.50:.95] ALWAYS, never mAP@0.5. Wrong metric = wrong choices.
+
+W&B (Weights & Biases) usage protocol (added May 1, 2026):
+
+  W1  EVERY training script (Phase 2-7) starts with:
+        wandb.init(
+          entity="navya2392-usc",
+          project="fathomnet-2026",
+          name=f"<phase>_<exp>_<model>_<imgsz>_<seed>",   # e.g. "p2_yolo11m_baseline_640_42"
+          tags=["<phase>", "<exp_id>"],
+          config={
+            "model": "yolo11m", "imgsz": 640, "epochs": 50, "batch": 16,
+            "lr": 0.01, "fold": 0, "seed": 42,
+            # any other hparam that varies between runs
+          },
+        )
+      Run name pattern lets us filter the W&B dashboard by phase/experiment.
+
+  W2  EVERY training loop logs at minimum (per epoch):
+        wandb.log({
+          "train/box_loss": ..., "train/cls_loss": ..., "train/dfl_loss": ...,
+          "val/mAP_50_95": ..., "val/mAP_50": ...,
+          "val/per_class_AP": wandb.plot.bar(...),     # 32-class breakdown
+          "epoch": e, "lr": current_lr,
+        }, step=e)
+      Use Ultralytics' built-in W&B logging where possible (it's enabled
+      automatically when wandb is installed); customize via callbacks for
+      per-class AP and any custom metrics (PU loss, EFL terms).
+
+  W3  AT END of every promising run, save artifacts:
+        wandb.save("best.pt")                          # uploads weights as artifact
+        wandb.log({"final/val_mAP": ..., "final/lb_mAP": ...})   # if known
+      Artifact lets us rebuild any past model from W&B without manual scp.
+
+  W4  EVERY Kaggle submission gets a NOTE on its W&B run:
+        wandb.run.notes = f"Submitted to Kaggle. LB mAP={lb_score:.4f}"
+      Lets us correlate val mAP vs LB mAP across runs (gap is informative
+      about overfitting / pseudo-label noise).
+
+  W5  RUN GROUPING: use wandb.group="phase{N}" to keep phases visually
+      organized in the dashboard. wandb.job_type="train"|"predict"|"ensemble"
+      separates training from inference/prep runs.
+
+  W6  COST DISCIPLINE: kill failed/throwaway runs immediately
+      (wandb.run.delete()) so the dashboard stays signal-rich, not noisy.
+      Every run committed to history should be one we'd cite in the
+      working notes paper (K.1).
 
 From official competition rules (added Apr 29, 2026):
 

@@ -1,9 +1,10 @@
 # FathomNet 2026 — Master Plan v5
 
-**Today:** Thursday, April 30, 2026 (EOD)
-**Kaggle deadline:** May 7, 2026 (7 days remaining)
-**Working notes paper deadline:** May 28, 2026 (28 days remaining)
-**Budget:** up to $300 (target ~$230, leave ~$70 headroom)
+**Today:** Friday, May 1, 2026 ~00:25 PT (post-midnight overnight session)
+**Kaggle deadline:** May 7, 2026 (~6 days, 21 hours remaining)
+**Working notes paper deadline:** May 28, 2026 (27 days remaining)
+**Budget:** up to $300 (target ~$240 under v5.5 aggressive mode, leave ~$60 headroom)
+**Strategic mode (v5.5):** AGGRESSIVE — go for top-3, plausibly top-1.
 
 **Schedule reality (added April 29):** This plan was originally drafted for an April 17 start (20-day runway). Effective work began April 28-29 due to a hiatus, leaving 8 days to the Kaggle deadline. The phase-by-phase technique recommendations remain unchanged, but the per-day timeline in the "Timeline — 20 Days" table needs to be compressed: each day of the original plan now corresponds to roughly 0.4 calendar days. Practical impact: skip backup-tier techniques (e.g., extended SSL pretraining) and focus on the must-have items (PU baseline, EFL+RFS, SAHI, WBF ensemble). See checklist for the compressed per-day plan.
 
@@ -23,6 +24,48 @@
 - **NEW FLAG 8 added:** Ultralytics' built-in `convert_coco()` does naive `category_id - 1` even with `cls91to80=False`. Verified by reading source. Cannot be used for FathomNet 2026 — would silently corrupt training labels. Custom converter required.
 - **Working notes paper deadlines confirmed** (May 28 submission, June 30 notification, July 6 camera-ready, CLEF Sept 21–24 in Jena). Added to timeline.
 - **Test set is fully annotated on the evaluator's side** ("1,425 fully annotated images" per the official overview). FLAG 5 still holds for our LOCAL `dataset_test.json` which contains zero annotations by design — that's the participant-facing data, not what the evaluator sees.
+
+**Changelog from v5.4 → v5.5 (AGGRESSIVE-mode pivot + multi-pretrained-init bake-off, May 1, 2026 ~00:25 PT):**
+
+Trigger: (1) reviewed live Kaggle leaderboard — HSU Lab leads at 0.321 with 235 entries; positions 2-4 cluster 0.24-0.28. We're targeting top-3 / plausibly top-1, not just "competitive." (2) Host Laura Chrobak's Rule 6 clarification on the Discussion board confirmed that publicly-available marine-specific pretrained DETECTORS (Megalodon, Megafishdetector, etc.) are allowed for initialization with disclosure. This is a major opening — those models were trained on FathomNet imagery and their weights are dramatically closer to optimal than COCO/ImageNet weights.
+
+- **NEW: Phase 2 EXP 2.3 expanded into a 5-WAY MULTI-PRETRAINED-INIT BAKE-OFF.** Previously a 2-way ImageNet-vs-BioCLIP2 comparison, now a screening sprint (10 epochs each, ~$5) over five candidate inits, then full 50-epoch training for the top 2 (~$5). Total ~$10 spend, ~10 hr GPU. Candidates:
+  1. YOLOv11m + COCO (vanilla anchor)
+  2. YOLOv11m + BioCLIP2 backbone (D.4 adapter)
+  3. YOLOv8x + Megalodon weights (`mbari-megalodon-yolov8x.pt`, FathomNet-trained, single-class objectness)
+  4. YOLOv8 + MBARI 315k weights (`mbari_315k_yolov8.pt`, FathomNet-trained, multi-class — strongest a priori candidate)
+  5. YOLOv5m + Megafishdetector (`megafishdetector_v0_yolov5m_1280p`, fish-specific)
+  Decision rule: pick the top-2 by val mAP@[.50:.95] on fold 0 → both promote into the Phase 6 5-fold + Phase 7 ensemble pipeline. The losers stay as candidate ensemble members if Phase 7 has compute slack. This single experiment may be the highest-leverage thing in the entire plan because most teams will not bother trying domain-specific inits.
+
+- **NEW: Tier-1 spending unlocks**: switch primary backbone from `yolo11m` (50M params) to `yolo11l` (86M params, +1-2 mAP, ~$20 extra in Phase 6) AND run 3 seeds × 5 folds = 15 ensemble members in WBF instead of 5+1 (~$30 extra in Phase 6). Phase 7 ensemble grows from 6 models → 17 models (15 YOLO + RT-DETR-X + best-marine-init). Diminishing returns kick in around 12-15 ensemble members; we're at the right size.
+
+- **NEW: Tier-4 — RT-DETR-X added to Phase 4 EXP 4.7 / Phase 6.** Previously RT-DETR-l only; now RT-DETR-X (extra-large transformer detector for ensemble architectural diversity). RT-DETR's transformer-based detection head provides truly different inductive biases vs YOLO's CNN head — uncorrelated errors → ensemble gain. ~$25 extra.
+
+- **NEW: Tier-5 — Open-vocabulary detection path added (Phase 5 stretch / Phase 7 contributor).** GroundingDINO (IDEA-Research, Apache 2.0) and OWL-ViT-Large (Google, Apache 2.0) zero-shot detectors used to specifically rescue rare classes (sea slug, isopod, < 30 instances). Even if these only catch 30-50% of rare-class instances they provide a non-zero P/R signal where YOLO is starved for training data. ~$30 extra + 4-6 hr coding.
+
+- **REVISED COST TABLE (v5.5):**
+  | Phase | v5.4 cost | v5.5 cost | Delta | Why |
+  |---|---|---|---|---|
+  | 1 (BioCLIP2) | $0 | $0 | 0 | Local CPU/laptop work |
+  | 2 (baseline + bake-off) | $3 | $12 | +$9 | 5-init screening + top-2 full training |
+  | 3 (PU + imbalance) | $12 | $15 | +$3 | Slight compute uplift for Soft Teacher round 3 |
+  | 4 (architecture + augs) | $18 | $32 | +$14 | yolo11l ablations + RT-DETR-X + open-vocab integration |
+  | 5 (hierarchical + pseudo) | $5 | $5 | 0 | Unchanged |
+  | 6 (5-fold + RT-DETR full) | $80 | $120 | +$40 | yolo11l (heavier) + 3 seeds (15 models) + RT-DETR-X |
+  | 7 (SAHI + WBF + per-class NMS + cal) | $14 | $25 | +$11 | Larger ensemble fusion + open-vocab inference + extra calibration sweep |
+  | **Total** | **$132** | **$209** | **+$77** | Within $300 budget, leaves ~$90 headroom |
+
+- **Estimated mAP@[.50:.95] uplift from v5.5 over v5.4: +0.04 to +0.10 (best case).** Concretely: v5.4 expected 0.25-0.40 endpoint → v5.5 expected 0.29-0.50. Pushes credible top-3 likelihood from ~25% to ~40%, top-1 from ~5-10% to ~15-20%.
+
+- **Working notes paper angle strengthened**: "Systematic comparison of 5 pretrained inits for marine object detection" is a clean experimental section. Combined with our 6 EDA decision rules, the paper has a clear story: data-driven design (Phase 0) → empirical init selection (Phase 2) → layered defenses for PU/imbalance (Phase 3-4) → ensemble + post-processing (Phase 6-7).
+
+- **B.0.5 hard gate updated**: existing Kaggle declaration covers YOLOv11+BioCLIP2; the EDIT to add Megalodon/MBARI 315k/Megafishdetector/GroundingDINO/OWL-ViT must be published BEFORE any submission using those models. Draft is in `notes/external_models_post.md` (revised v2). User action needed on May 1 morning before any of the new-init runs.
+
+- **Changes NOT made (rejected for risk/budget reasons):**
+  - SAM2 / Co-DETR / DINO-DETR — too speculative for compressed timeline; would consume $50+ for uncertain gain
+  - Custom underwater dehazing networks — Phase 4 EXP 4.2 (gray-world + CLAHE) covers most of this benefit at near-zero cost
+  - Distillation-only path (Option C from Phase 1 doc) — additive to other paths but lower priority than RT-DETR-X
+  - Switching to a non-Ultralytics framework (mmdetection, detectron2) — sunk implementation cost too high vs marginal gain
 
 **Changelog from v5.3 → v5.4 (Phase 0 deep review + plan modernization, April 30, 2026 EOD):**
 - **All 6 EDA decision rules confirmed triggered.** Re-evaluation against the live `class_counts.json`, `cv_folds.pkl`, and `rfs_repeat_factors.pkl` shows every threshold was crossed by a wide margin (imbalance 818:1 vs threshold 10; 14 classes <100 instances vs threshold 5; 9 classes <50 instances vs threshold 3; 62.5% single-cat-image rate vs threshold 50%). EFL + RFS + class-aware copy-paste + Soft Teacher + Kiryo PU + SAHI + multi-scale are all still mandatory.
@@ -411,32 +454,31 @@ The original 20-day plan no longer applies (work started Apr 28, not Apr 17). Be
 | Apr 29 | W&B account, env setup, .env created, JSON snapshot, sample submission schema derived (file doesn't exist), official eval notebook vendored, competition rules digested, AGPL-3.0 LICENSE, .gitignore expanded, train images downloaded (45 GB, 7,888 files), tar backup, decode spot-check |
 | Apr 30 | Phase 0 EDA notebook ran end-to-end (7 artifacts produced); Phase 0 deep review + master plan v5.4 update; src/submit.py + 29 tests; coco_to_yolo.py (22,225 labels written); make_yolo_fold.py (5 folds, check_det_dataset → OK); RunPod account + $100 credit + SSH key; GitHub private repo with 8 clean commits |
 
-### What's left (May 1-7)
+### What's left (May 1-7) — UPDATED v5.5 AGGRESSIVE MODE
 
 | Date | Day | Phase | Focus | Hours | RunPod $ |
 |---|---|---|---|---|---|
-| May 1 | Fri | B / 1 | B.0.5 Kaggle Discussion post (HARD GATE); D.1 BioCLIP2 download; D.2-D.5 BioCLIP2 adapter + smoke-test (LOCAL, no GPU) | 6-8 | $0 |
-| May 2 | Sat | 2 | Phase 2 baselines on RunPod 4090 (NOT Kaggle T4 — see "Phase 2 strategy revision" below). YOLOv11n nano sanity (30 min), YOLOv11m baseline (3 hr on 4090), backbone bake-off ImageNet vs BioCLIP2 (3 hr). **First Kaggle submission lands here — anchors leaderboard.** | 8 | ~$3 |
-| May 3 | Sun | 3 | Phase 3 PU + class imbalance experiments. Kiryo PU, EFL, RFS, Soft Teacher (each ~2-4 hr on 4090). Combined run. | 12-14 | ~$8 |
-| May 4 | Mon | 4 | Phase 4 architecture + augmentation. EXP 4.1 imgsz 640 vs 1280 (RESOLVES Phase 0 tension), 4.2 underwater preproc, 4.3 underwater aug, 4.4 class-aware copy-paste (per-class schedule from v5.4), 4.5 multi-scale, 4.6 YOLOv11l, 4.7 RT-DETR. Skip 4.8 if behind. | 16-18 | ~$12 |
-| May 5 | Tue | 5 + 6 | Phase 5 hierarchical loss + pseudo R2 (~6 hr). KICK OFF Phase 6: 5-fold CV training with winning Phase 4 config on **A100 SECURE Cloud** (preempt-safe). Train fold 0 + start folds 1-4 sequentially. | 12 + overnight | ~$25 |
-| May 6 | Wed | 6 + 7 | Phase 6 finishes (folds 1-4 + RT-DETR full-data run). Phase 7 SAHI+TTA+WBF+calibration+per-class NMS on 4090. Multiple Kaggle submissions to compare. | 16 | ~$22 |
-| May 7 | Thu | Buffer + Submit | Final submission selection (2 selections allowed). Stop all pods. Backup weights. Verify submission CSV via local validate_submission. | 4 | $0 |
+| May 1 | Fri | B / D / 2-prep | (DONE OVERNIGHT) B.0.5 Kaggle declaration v2 update — add Megalodon/MBARI 315k/Megafishdetector/GroundingDINO/OWL-ViT to existing thread; D.6 commit Block D; download all marine model weights (`scripts/download_marine_models.py`); skim Phase 2 notebook + scripts; **DEPLOY first RunPod RTX 4090** | 4-6 | $0-2 |
+| May 2 | Sat | 2 | **5-WAY MULTI-PRETRAINED-INIT BAKE-OFF (v5.5 NEW).** Run `scripts/eval_pretrained_inits.py` — 5 candidates × 10 epochs each on fold 0 (~5 hr GPU on 4090). Then full 50-epoch training for top 2 winners (~5 hr). Submit best to Kaggle as the FIRST anchor (vanilla yolo11m+COCO at 10ep is sufficient — first-submission rule). Pick PRIMARY + SECONDARY init for Phase 6. | 12 | ~$10 |
+| May 3 | Sun | 3 | Phase 3 PU + class imbalance experiments. Kiryo PU, EFL, RFS, Soft Teacher (each ~2-4 hr on 4090). Combined run on PRIMARY init from Phase 2. | 12-14 | ~$15 |
+| May 4 | Mon | 4 | Phase 4 architecture + augmentation. EXP 4.1 imgsz 640/1024/1280 (3-way ablation), 4.2 underwater preproc, 4.3 underwater aug, 4.4 class-aware copy-paste, 4.5 multi-scale, **4.6 yolo11l (v5.5: now mandatory not optional)**, 4.7 RT-DETR-X (v5.5 upgrade), 4.9 NEW open-vocab integration (GroundingDINO/OWL-ViT pseudo-label generation for rare classes). | 18-20 | ~$32 |
+| May 5 | Tue | 5 + 6 | Phase 5 hierarchical loss + pseudo R2 (~6 hr) on PRIMARY init only. KICK OFF Phase 6: 5-fold × 3 seeds = 15 ensemble members of yolo11l on **A100 SECURE Cloud**. Plus 5-fold of SECONDARY init in parallel. | 12 + overnight | ~$60 |
+| May 6 | Wed | 6 + 7 | Phase 6 finishes overnight (15 yolo11l + 5 secondary + RT-DETR-X full-data + open-vocab inference). Phase 7 SAHI+TTA+WBF+per-class NMS+calibration on 4090. Multiple Kaggle submissions to compare. | 16 | ~$45 |
+| May 7 | Thu | 7 + Submit | Final ensemble tuning (WBF weight grid search across 17+ models). Pick FINAL 2 SUBMISSIONS. Stop all pods. Backup weights. Verify CSVs via local validate_submission + local_score. | 6 | $0 |
 | **May 7 23:59 PT** | | | **KAGGLE DEADLINE** | | |
-| **Subtotal** | | | | **~75 hr** | **~$70** |
-| Buffer (rerun, debug, exploded configs) | | | | | ~$30 |
-| **Total spend** | | | | | **~$100** |
+| **Subtotal** | | | | **~85 hr** | **~$165** |
+| Buffer (rerun, debug, exploded configs) | | | | | ~$45 |
+| Open-vocab compute (variable) | | | | | ~$0-30 |
+| **Total spend (v5.5)** | | | | | **~$210-240** |
 
-**$130 unused** vs original $230 budget. Why so cheap: BioCLIP2 saved $30 on Phase 1, RunPod 4090 community pricing has dropped, and we now have local pre-flight checks (29 tests + check_det_dataset) that prevent wasted GPU hours on broken configs.
+**~$60-90 headroom** vs $300 budget cap. v5.5 spends $110-140 more than v5.4 to chase the top-1 strategy. Spend breakdown of the +$110: $9 multi-init bake-off, $14 Phase 4 expansions, $40 Phase 6 (3 seeds × 5 folds × yolo11l), $11 Phase 7 ensemble fusion + open-vocab. All upside has a measurable Phase-2-decision dependency: if the multi-init bake-off shows no clear winner over vanilla COCO, we can downgrade Phase 6 back to v5.4 scope and save ~$50.
 
 ### After-deadline (paper)
 
 | Date | What |
 |---|---|
 | May 28 | CLEF working notes paper (3-5 pages to CEUR-WS) — REQUIRED for official ranking |
-| Jun 30 | Notification |
-| Jul 6 | Camera-ready |
-| Sep 21-24 | CLEF 2026 Jena, Germany — conference (optional attendance) |
+
 
 **Note on "official ranking":** Kaggle leaderboard score alone does NOT make you part of the officially published ranking. The May 28 paper is what locks in your position.
 
@@ -727,24 +769,49 @@ Establish your reference point on the leaderboard. Every subsequent experiment i
 
 Medium size (m) is the sweet spot — large enough to capture fine features, small enough to iterate quickly. YOLOv11 reads COCO natively via Ultralytics, so integration is minimal.
 
-### Experiments
+### Experiments (UPDATED v5.5: 5-way multi-pretrained-init bake-off)
 
-1. **Nano sanity check** (YOLOv11n, 10 epochs, ~30 min) — just verifies pipeline runs end-to-end
-2. **Medium baseline** (YOLOv11m, 50 epochs, imgsz=640, ~2h) — true reference point
-3. **Backbone bake-off** (~1.5h) — same training, three different starting weights: ImageNet, BioClip2, and your SSL backbone from Phase 1
+1. **Nano sanity check** (YOLOv11n, 10 epochs, ~30 min) — just verifies pipeline runs end-to-end. SUBMIT THIS to Kaggle to anchor the leaderboard (per first-submission rule).
 
-### Key decision
+2. **Medium baseline** (YOLOv11m + COCO, 50 epochs, imgsz=640, ~2h) — vanilla reference. This becomes Init Candidate #1 in the bake-off.
 
-Take the baseline and the winning backbone from the bake-off. That becomes your foundation for every later experiment.
+3. **5-WAY MULTI-PRETRAINED-INIT BAKE-OFF (v5.5 NEW):** Screening sprint at 10 epochs each on fold 0, then promote top 2 to full 50-epoch training. Total ~10 hr GPU, ~$10. Five candidates:
+
+   | # | Init | Architecture | Pretraining | Why considered |
+   |---|---|---|---|---|
+   | 1 | `yolo11m.pt` + COCO | YOLOv11m | MS-COCO 2017 | Phase 2 vanilla anchor (already from Step 2) |
+   | 2 | YOLOv11m + BioCLIP2 backbone | YOLOv11m + adapter | TreeOfLife-10M (biology) | Biology-domain features (Phase 1 D.4) |
+   | 3 | `mbari-megalodon-yolov8x.pt` | YOLOv8x | All FathomNet localizations (single class) | Same data distribution as competition |
+   | 4 | `mbari_315k_yolov8.pt` | YOLOv8 | 315k MBARI deep-sea benthic images, multi-class | **STRONGEST a priori — same distribution AND multi-class** |
+   | 5 | `megafishdetector_v0_yolov5m_1280p` | YOLOv5m | AIMs Ozfish, FathomNet subset, VIAME, NOAA Puget Sound, DeepFish | Fish-specific subset benefit |
+
+   Each runs identical hyperparameters (imgsz=640, batch=16, lr=0.01, 10 epochs) for fair comparison. After 10 epochs, rank by val mAP@[.50:.95] on fold 0. Take the **top 2** and run them for the full 50 epochs.
+
+### Key decision (UPDATED v5.5)
+
+Promote BOTH top-2 winners forward into Phase 6 5-fold training and Phase 7 ensemble. Two starting points means uncorrelated errors at inference time → free ensemble gain via WBF.
 
 ```
-IF SSL_backbone_val_mAP > BioClip2_backbone_val_mAP + 0.5:
-    USE SSL backbone going forward
-ELIF BioClip2_backbone_val_mAP > ImageNet_val_mAP + 0.3:
-    USE BioClip2 going forward (don't waste further SSL compute)
-ELSE:
-    USE ImageNet (none of the pretrained backbones help for some reason — worth investigating, could be a loading bug)
+RANK_BY_VAL_MAP_AT_10_EPOCHS:
+    rank = sorted(candidates, key=val_map, reverse=True)
+    primary_init = rank[0]      # heaviest investment in Phase 3-7
+    secondary_init = rank[1]    # parallel track in Phase 6 5-fold
+
+IF primary_init.val_mAP < 0.15 AT epoch 10:
+    SOMETHING IS WRONG. Likely cat_id mapping bug (FLAG 1) or
+    label format issue. Stop and debug. Do NOT proceed to Phase 3
+    until at least one init clears 0.15 at 10 epochs (matches
+    expected baseline trajectory).
+
+IF rank[0].val_mAP - rank[1].val_mAP > 0.05 (huge gap):
+    Drop rank[1] from Phase 6 — diminishing returns on ensemble
+    diversity if one model dominates.
+
+IF rank[0].val_mAP - rank[1].val_mAP < 0.02 (very close):
+    Add rank[2] as a 3rd ensemble member in Phase 6.
 ```
+
+**Logging requirement:** Every bake-off run goes to W&B with `tags=["phase2", "bakeoff", init_name]` so the dashboard view is filterable. Save the per-class AP breakdown for each — different inits will excel at different classes (e.g., Megafishdetector should crush fish classes, MBARI 315k might dominate benthic classes), and that information feeds the per-class NMS tuning in Phase 7 EXP 7.6.
 
 ### Submit to Kaggle
 
