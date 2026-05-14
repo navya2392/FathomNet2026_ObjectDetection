@@ -119,6 +119,36 @@ class TrainConfig:
     dataset_path_override: Optional[Path] = None
     no_wandb: bool = False
 
+    # Augmentation knobs (Ultralytics names). Defaults match Ultralytics
+    # YOLO defaults (mosaic on, mixup off, copy_paste off, light HSV jitter).
+    # Override via CLI for "heavy aug" experiments inspired by FathomNet 2025
+    # winner Robert Hunt (Cutmix+Mixup gave +0.16 val improvement) — see
+    # notes/FINDINGS.md F-009 / F-010.
+    mosaic: float = 1.0          # default 1.0 — random 4-image mosaic
+    mixup: float = 0.0           # default 0.0 — Hunt used ~0.15
+    copy_paste: float = 0.0      # default 0.0 — segmentation-style copy-paste
+    hsv_h: float = 0.015         # hue jitter; Ultralytics default
+    hsv_s: float = 0.7           # saturation; Ultralytics default
+    hsv_v: float = 0.4           # value/brightness; Ultralytics default
+    degrees: float = 0.0         # rotation; default 0
+    translate: float = 0.1       # translation; Ultralytics default
+    scale: float = 0.5           # zoom; Ultralytics default
+    fliplr: float = 0.5          # horizontal flip; Ultralytics default
+    flipud: float = 0.0          # vertical flip; default 0 (most images orientation-aware)
+    erasing: float = 0.4         # random erasing; Ultralytics default for v8+
+
+    # Layer-wise LR / freezing — addresses F-002 implication 4 (preserve MBARI prior)
+    freeze: int = 0              # freeze first N backbone layers; 0=disabled
+
+    # Kiryo non-negative PU loss (Phase 3 EXP 3.2) — addresses F-008.
+    # When enabled, the v8DetectionLoss classification head is replaced
+    # with a PU-corrected version. See src/pu_v8_detection_loss.py.
+    pu_loss: bool = False
+    pu_pi: float = 0.1401            # global pi (per-class refinement is a follow-up)
+    pu_pi_min: float = 0.005         # floor for stability
+    pu_pi_max: float = 0.5           # ceiling for stability
+    pu_warmup_epochs: int = 3        # use plain BCE for first N epochs
+
 
 def _git_sha() -> str:
     try:
@@ -285,6 +315,34 @@ def _train_ultralytics(cfg: TrainConfig, init_path_or_name: str, fold_yaml: Path
 
     model = YOLO(init_path_or_name)
 
+    # Optional Kiryo PU loss installation (Phase 3 EXP 3.2 — see F-008).
+    pu_handle = None
+    if cfg.pu_loss:
+        from src.pu_v8_detection_loss import install_pu_loss_on_model
+        nc = int(getattr(model.model, "nc", 32))
+        pu_handle = install_pu_loss_on_model(
+            model,
+            num_classes=nc,
+            pi=cfg.pu_pi,
+            pi_min=cfg.pu_pi_min,
+            pi_max=cfg.pu_pi_max,
+            warmup_epochs=cfg.pu_warmup_epochs,
+        )
+
+        def _pu_set_epoch_callback(trainer):
+            """Update PU current epoch + log every-epoch state for verification."""
+            try:
+                ep = int(trainer.epoch)
+                pu_handle.set_epoch(ep)
+                st = pu_handle.state()
+                print(f"[pu_loss] epoch {ep}: state={st}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pu_loss] callback error: {exc}")
+
+        model.add_callback("on_train_epoch_start", _pu_set_epoch_callback)
+        print(f"[pu_loss] enabled: pi={cfg.pu_pi}, warmup_epochs={cfg.pu_warmup_epochs}, "
+              f"pi_min={cfg.pu_pi_min}, pi_max={cfg.pu_pi_max}")
+
     train_kwargs = dict(
         data=str(fold_yaml),
         epochs=cfg.epochs,
@@ -302,9 +360,32 @@ def _train_ultralytics(cfg: TrainConfig, init_path_or_name: str, fold_yaml: Path
         seed=cfg.seed,
         verbose=True,
         exist_ok=True,
+        # Augmentation pass-through (see TrainConfig docstring).
+        mosaic=cfg.mosaic,
+        mixup=cfg.mixup,
+        copy_paste=cfg.copy_paste,
+        hsv_h=cfg.hsv_h,
+        hsv_s=cfg.hsv_s,
+        hsv_v=cfg.hsv_v,
+        degrees=cfg.degrees,
+        translate=cfg.translate,
+        scale=cfg.scale,
+        fliplr=cfg.fliplr,
+        flipud=cfg.flipud,
+        erasing=cfg.erasing,
+        freeze=cfg.freeze if cfg.freeze > 0 else None,
     )
     print(f"[ultralytics] model.train({train_kwargs})")
-    train_results = model.train(**train_kwargs)
+    try:
+        train_results = model.train(**train_kwargs)
+    finally:
+        if pu_handle is not None:
+            try:
+                final_state = pu_handle.state()
+                print(f"[pu_loss] final state: {final_state}")
+                pu_handle.uninstall()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[pu_loss] uninstall error: {exc}")
 
     save_dir = Path(getattr(train_results, "save_dir", REPO_ROOT / cfg.project / cfg.name))
     best_pt = save_dir / "weights" / "best.pt"
@@ -465,6 +546,38 @@ def parse_args() -> TrainConfig:
                    help="If set, regenerates fold YAMLs with this `path:` "
                         "before training. Useful when running on RunPod where "
                         "data lives at /workspace/data/raw.")
+    # Augmentation knobs (see TrainConfig for defaults).
+    p.add_argument("--mosaic", type=float, default=1.0,
+                   help="Mosaic augmentation prob (0.0-1.0, Ultralytics default 1.0)")
+    p.add_argument("--mixup", type=float, default=0.0,
+                   help="Mixup augmentation prob (0.0-1.0, Ultralytics default 0.0)")
+    p.add_argument("--copy-paste", type=float, default=0.0,
+                   help="Copy-paste augmentation prob (0.0-1.0, Ultralytics default 0.0)")
+    p.add_argument("--hsv-h", type=float, default=0.015, help="HSV hue jitter")
+    p.add_argument("--hsv-s", type=float, default=0.7, help="HSV saturation jitter")
+    p.add_argument("--hsv-v", type=float, default=0.4, help="HSV value/brightness jitter")
+    p.add_argument("--degrees", type=float, default=0.0, help="Rotation degrees")
+    p.add_argument("--translate", type=float, default=0.1, help="Translation fraction")
+    p.add_argument("--scale", type=float, default=0.5, help="Scale jitter fraction")
+    p.add_argument("--fliplr", type=float, default=0.5, help="Horizontal flip prob")
+    p.add_argument("--flipud", type=float, default=0.0, help="Vertical flip prob")
+    p.add_argument("--erasing", type=float, default=0.4, help="Random erasing prob")
+    p.add_argument("--freeze", type=int, default=0,
+                   help="Freeze first N backbone layers (0=disabled). "
+                        "Per F-002: freeze=10 helps preserve MBARI prior on small fine-tune sets.")
+    # Kiryo PU loss (Phase 3 EXP 3.2)
+    p.add_argument("--pu-loss", action="store_true",
+                   help="Enable Kiryo non-negative PU loss on the classification head. "
+                        "Addresses F-008 (PU+full-coverage gap). See src/pu_v8_detection_loss.py.")
+    p.add_argument("--pu-pi", type=float, default=0.1401,
+                   help="Global PU prior pi (default 0.1401, from F-003 area-fraction estimate). "
+                        "Used for all 32 classes; per-class refinement is a follow-up.")
+    p.add_argument("--pu-pi-min", type=float, default=0.005,
+                   help="Floor for per-class pi (stability).")
+    p.add_argument("--pu-pi-max", type=float, default=0.5,
+                   help="Ceiling for per-class pi (stability).")
+    p.add_argument("--pu-warmup-epochs", type=int, default=3,
+                   help="Use plain BCE for the first N epochs before switching to PU.")
 
     args = p.parse_args()
     return TrainConfig(**vars(args))

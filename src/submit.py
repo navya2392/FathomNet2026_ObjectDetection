@@ -21,6 +21,11 @@ THREE PUBLIC FUNCTIONS:
       good?" check so daily Kaggle submission slots are reserved for genuine
       leaderboard probes (per master plan rules R8 + R10).
 
+SUPPLY HELPERS (Tier 1C-i / tooling):
+
+  local_per_category_ap5095_from_solution, build_cv_val_solution_dataframe,
+  filter_pred_df_by_per_class_conf, load_per_class_conf_thresholds
+
 DESIGN DECISIONS:
 
 - pred_df schema is the lingua franca: every Phase 2-7 inference script
@@ -57,7 +62,7 @@ import json
 import pickle
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -105,6 +110,116 @@ COCO_MAX_DETS_PER_IMAGE: int = 100  # pycocotools default; warning threshold
 DEFAULT_CV_FOLDS_PATH = _REPO_ROOT / "data" / "cv_folds.pkl"
 DEFAULT_TRAIN_JSON_PATH = _REPO_ROOT / "data" / "raw" / "train_dataset.json"
 DEFAULT_TEST_JSON_PATH = _REPO_ROOT / "data" / "raw" / "test_dataset.json"
+
+
+def val_image_ids_for_fold(
+    fold_idx: int,
+    *,
+    cv_folds_path: str | Path | None = None,
+) -> set[int]:
+    """CV fold validation image ids (same definition as ``local_score``)."""
+    cv_folds_path = Path(cv_folds_path) if cv_folds_path else DEFAULT_CV_FOLDS_PATH
+    with cv_folds_path.open("rb") as f:
+        cv_data = pickle.load(f)
+    n_folds = cv_data["n_folds"]
+    if not 0 <= fold_idx < n_folds:
+        raise ValueError(f"fold_idx must be in [0, {n_folds - 1}], got {fold_idx}")
+    return set(cv_data["folds"][fold_idx]["val_image_ids"])
+
+
+def build_cv_val_solution_dataframe(
+    fold_idx: int,
+    *,
+    cv_folds_path: str | Path | None = None,
+    train_json_path: str | Path | None = None,
+    val_image_ids: set[int] | None = None,
+) -> pd.DataFrame:
+    """Ground-truth rows for ``local_score`` / tuning (val annotations only)."""
+    cv_folds_path = Path(cv_folds_path) if cv_folds_path else DEFAULT_CV_FOLDS_PATH
+    train_json_path = Path(train_json_path) if train_json_path else DEFAULT_TRAIN_JSON_PATH
+    if val_image_ids is None:
+        val_image_ids = val_image_ids_for_fold(fold_idx, cv_folds_path=cv_folds_path)
+
+    with train_json_path.open() as f:
+        train_data = json.load(f)
+    val_annotations = [a for a in train_data["annotations"] if a["image_id"] in val_image_ids]
+
+    solution_rows = []
+    for ann_idx, ann in enumerate(val_annotations, start=1):
+        x, y, w, h = ann["bbox"]
+        solution_rows.append(
+            {
+                "annotation_id": ann_idx,
+                "image_id": int(ann["image_id"]),
+                "category_id": int(ann["category_id"]),
+                "bbox_x": float(x),
+                "bbox_y": float(y),
+                "bbox_width": float(w),
+                "bbox_height": float(h),
+            }
+        )
+    return pd.DataFrame(
+        solution_rows,
+        columns=[
+            "annotation_id",
+            "image_id",
+            "category_id",
+            "bbox_x",
+            "bbox_y",
+            "bbox_width",
+            "bbox_height",
+        ],
+    )
+
+
+def _pred_subset_to_submission_df(pred_subset: pd.DataFrame) -> pd.DataFrame:
+    """pred_df rows -> Kaggle submission-frame columns for COCOeval."""
+    return pd.DataFrame(
+        {
+            "annotation_id": np.arange(1, len(pred_subset) + 1, dtype=int),
+            "image_id": pred_subset["image_id"].astype(int).values,
+            "category_id": pred_subset["class_idx"].map(idx_to_cat_id).astype(int).values,
+            "bbox_x": pred_subset["x_topleft"].astype(float).values,
+            "bbox_y": pred_subset["y_topleft"].astype(float).values,
+            "bbox_width": pred_subset["width"].astype(float).values,
+            "bbox_height": pred_subset["height"].astype(float).values,
+            "score": pred_subset["score"].astype(float).values,
+        }
+    )
+
+
+def filter_pred_df_by_per_class_conf(
+    pred_df: pd.DataFrame,
+    thresholds_by_cat_id: dict[int, float],
+    *,
+    default_threshold: float,
+) -> pd.DataFrame:
+    """Drop rows whose ``score`` is below the threshold for that row's COCO category."""
+    if pred_df.empty:
+        return pred_df
+    out = pred_df.copy()
+    mapped_cat = out["class_idx"].map(idx_to_cat_id).astype(int)
+    thr_series = mapped_cat.map(lambda c: thresholds_by_cat_id.get(int(c), default_threshold)).astype(
+        np.float64
+    )
+    keep = out["score"].to_numpy(dtype=np.float64) >= thr_series.to_numpy()
+    return out.loc[keep].reset_index(drop=True)
+
+
+def load_per_class_conf_thresholds(path: str | Path) -> tuple[dict[int, float], float]:
+    """Load Tier 1C-i JSON written by ``scripts/tune_per_class_conf.py``."""
+    path = Path(path)
+    with path.open(encoding="utf-8") as f:
+        payload = json.load(f)
+    default_thr = float(payload.get("default_conf", 0.001))
+    by_cat: dict[int, float] = {}
+    by_idx = payload.get("thresholds_by_class_idx")
+    if isinstance(by_idx, list) and len(by_idx) == len(idx_to_cat_id):
+        for i, thr in enumerate(by_idx):
+            by_cat[int(idx_to_cat_id[i])] = float(thr)
+    for k, v in (payload.get("thresholds_by_cat_id") or {}).items():
+        by_cat[int(k)] = float(v)
+    return by_cat, default_thr
 
 
 class ValidationError(ValueError):
@@ -185,6 +300,19 @@ def yolo_preds_to_submission_csv(
             "score": pred_df["score"].astype(float),
         }
     )
+
+    # Models occasionally produce degenerate boxes (width or height <= 0) at
+    # image boundaries, after NMS coordinate rounding, or on overlapping
+    # cluster collapse. Kaggle validates STRICT positive dimensions
+    # (validate_submission() below raises ValidationError otherwise), so we
+    # filter them here. Keeping the count visible for monitoring.
+    n_before = len(out_df)
+    out_df = out_df[(out_df["bbox_width"] > 0) & (out_df["bbox_height"] > 0)].copy()
+    n_dropped = n_before - len(out_df)
+    if n_dropped > 0:
+        print(f"[yolo_preds_to_submission_csv] dropped {n_dropped} degenerate "
+              f"boxes (width<=0 or height<=0) of {n_before} total rows "
+              f"({100 * n_dropped / max(n_before, 1):.3f}%)")
 
     if sort_by_image:
         out_df = out_df.sort_values(
@@ -380,69 +508,70 @@ def local_score(
     cv_folds_path = Path(cv_folds_path) if cv_folds_path else DEFAULT_CV_FOLDS_PATH
     train_json_path = Path(train_json_path) if train_json_path else DEFAULT_TRAIN_JSON_PATH
 
-    with cv_folds_path.open("rb") as f:
-        cv_data = pickle.load(f)
-    n_folds = cv_data["n_folds"]
-    if not 0 <= fold_idx < n_folds:
-        raise ValueError(f"fold_idx must be in [0, {n_folds - 1}], got {fold_idx}")
-
-    val_image_ids = set(cv_data["folds"][fold_idx]["val_image_ids"])
-
-    with train_json_path.open() as f:
-        train_data = json.load(f)
-    val_annotations = [a for a in train_data["annotations"] if a["image_id"] in val_image_ids]
-
-    solution_rows = []
-    for ann_idx, ann in enumerate(val_annotations, start=1):
-        x, y, w, h = ann["bbox"]
-        solution_rows.append(
-            {
-                "annotation_id": ann_idx,
-                "image_id": int(ann["image_id"]),
-                "category_id": int(ann["category_id"]),
-                "bbox_x": float(x),
-                "bbox_y": float(y),
-                "bbox_width": float(w),
-                "bbox_height": float(h),
-            }
-        )
-    solution_df = pd.DataFrame(solution_rows, columns=["annotation_id", "image_id", "category_id",
-                                                       "bbox_x", "bbox_y", "bbox_width", "bbox_height"])
+    val_image_ids = val_image_ids_for_fold(fold_idx, cv_folds_path=cv_folds_path)
+    solution_df = build_cv_val_solution_dataframe(
+        fold_idx,
+        cv_folds_path=cv_folds_path,
+        train_json_path=train_json_path,
+        val_image_ids=val_image_ids,
+    )
 
     pred_subset = pred_df[pred_df["image_id"].isin(val_image_ids)].copy()
     if pred_subset.empty:
         return 0.0
 
-    submission_df = pd.DataFrame(
-        {
-            "annotation_id": np.arange(1, len(pred_subset) + 1, dtype=int),
-            "image_id": pred_subset["image_id"].astype(int).values,
-            "category_id": pred_subset["class_idx"].map(idx_to_cat_id).astype(int).values,
-            "bbox_x": pred_subset["x_topleft"].astype(float).values,
-            "bbox_y": pred_subset["y_topleft"].astype(float).values,
-            "bbox_width": pred_subset["width"].astype(float).values,
-            "bbox_height": pred_subset["height"].astype(float).values,
-            "score": pred_subset["score"].astype(float).values,
-        }
-    )
+    submission_df = _pred_subset_to_submission_df(pred_subset)
 
     return _coco_score(solution_df, submission_df, "annotation_id")
 
 
-def _coco_score(
+def local_per_category_ap5095_from_solution(
+    solution_df: pd.DataFrame,
+    pred_subset: pd.DataFrame,
+) -> dict[int, float]:
+    """Per-COCO-category AP@[.50:.95] using the same eval setup as ``local_score``.
+
+    Typically ``solution_df`` is fixed (val GT) while ``pred_subset`` varies during a
+    hyper-parameter sweep (Tier 1C-i per-class confidence grid).
+
+    Requires ``pycocotools``. Returns an empty dict if ``pred_subset`` is empty.
+    """
+    if pred_subset.empty:
+        return {}
+    submission_df = _pred_subset_to_submission_df(pred_subset)
+    coco_eval = _coco_bbox_accumulate(solution_df, submission_df)
+    if coco_eval is None:
+        return {}
+    return _per_category_ap5095_from_eval(coco_eval)
+
+
+def _per_category_ap5095_from_eval(coco_eval: Any) -> dict[int, float]:
+    """Mean precision tensor aggregation (Detectron2-style nanmean over IoU × recall)."""
+    prec = coco_eval.eval["precision"]
+    params = coco_eval.params
+    try:
+        a_idx = params.areaRngLbl.index("all")
+    except (AttributeError, ValueError):
+        a_idx = 0
+    try:
+        m_idx = list(params.maxDets).index(100)
+    except (AttributeError, ValueError):
+        m_idx = min(len(params.maxDets) - 1, 2)
+    prec_k = prec[:, :, :, a_idx, m_idx].astype(np.float64)
+    prec_k[prec_k < 0] = np.nan
+    ap_per_k = np.nanmean(prec_k, axis=(0, 1))
+    out: dict[int, float] = {}
+    for cid, ap in zip(params.catIds, ap_per_k):
+        v = float(ap)
+        out[int(cid)] = 0.0 if np.isnan(v) else v
+    return out
+
+
+def _coco_bbox_accumulate(
     solution: pd.DataFrame,
     submission: pd.DataFrame,
-    row_id_column_name: str,
-) -> float:
-    """Compute COCO mAP@[.50:.95] via pycocotools.
-
-    VENDORED FROM docs/eval_notebook/map50-95.ipynb (Kaggle's official
-    scorer for FathomNet 2026, written by Laura Chrobak / MBARI).
-    DO NOT EDIT independently -- if Kaggle updates the notebook, re-vendor
-    this function from there to keep local scores aligned with leaderboard.
-
-    Original docstring trimmed for brevity; behavior identical.
-    """
+) -> Any | None:
+    """Validate frames, build COCO structs, ``evaluate`` + ``accumulate``. No ``summarize``."""
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
 
@@ -476,7 +605,7 @@ def _coco_score(
     gt_image_ids = set(gt_df["image_id"].unique())
     pred_df = pred_df[pred_df["image_id"].isin(gt_image_ids)].copy()
     if len(pred_df) == 0:
-        return 0.0
+        return None
 
     valid_category_ids = set(gt_df["category_id"].unique())
     invalid = sorted(set(pred_df["category_id"].unique()) - valid_category_ids)
@@ -499,8 +628,12 @@ def _coco_score(
                 "id": int(ann_idx),
                 "image_id": int(row["image_id"]),
                 "category_id": int(row["category_id"]),
-                "bbox": [float(row["bbox_x"]), float(row["bbox_y"]),
-                         float(row["bbox_width"]), float(row["bbox_height"])],
+                "bbox": [
+                    float(row["bbox_x"]),
+                    float(row["bbox_y"]),
+                    float(row["bbox_width"]),
+                    float(row["bbox_height"]),
+                ],
                 "area": float(row["bbox_width"] * row["bbox_height"]),
                 "iscrowd": 0,
             }
@@ -512,13 +645,17 @@ def _coco_score(
             {
                 "image_id": int(row["image_id"]),
                 "category_id": int(row["category_id"]),
-                "bbox": [float(row["bbox_x"]), float(row["bbox_y"]),
-                         float(row["bbox_width"]), float(row["bbox_height"])],
+                "bbox": [
+                    float(row["bbox_x"]),
+                    float(row["bbox_y"]),
+                    float(row["bbox_width"]),
+                    float(row["bbox_height"]),
+                ],
                 "score": float(row["score"]),
             }
         )
     if not coco_dt:
-        return 0.0
+        return None
 
     original_stdout = sys.stdout
     sys.stdout = io.StringIO()
@@ -530,6 +667,32 @@ def _coco_score(
         coco_eval = COCOeval(coco_gt_obj, coco_dt_obj, "bbox")
         coco_eval.evaluate()
         coco_eval.accumulate()
+        return coco_eval
+    finally:
+        sys.stdout = original_stdout
+
+
+def _coco_score(
+    solution: pd.DataFrame,
+    submission: pd.DataFrame,
+    row_id_column_name: str,
+) -> float:
+    """Compute COCO mAP@[.50:.95] via pycocotools.
+
+    VENDORED FROM docs/eval_notebook/map50-95.ipynb (Kaggle's official
+    scorer for FathomNet 2026, written by Laura Chrobak / MBARI).
+    DO NOT EDIT independently -- if Kaggle updates the notebook, re-vendor
+    this function from there to keep local scores aligned with leaderboard.
+
+    Original docstring trimmed for brevity; behavior identical.
+    """
+    coco_eval = _coco_bbox_accumulate(solution, submission)
+    if coco_eval is None:
+        return 0.0
+
+    original_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
         coco_eval.summarize()
         m_ap = coco_eval.stats[0]
     finally:
@@ -538,7 +701,25 @@ def _coco_score(
     return float(m_ap) if not np.isnan(m_ap) else 0.0
 
 
-def from_ultralytics_results(results: Iterable, image_id_lookup: dict[str, int]) -> pd.DataFrame:
+def unmirror_horizontal_xywh(pred_df: pd.DataFrame, image_width: float) -> pd.DataFrame:
+    """Map COCO xywh boxes from a horizontally flipped image back to original coords.
+
+    Flipped-input inference sees x increasing rightward on the mirrored raster.
+    Original top-left x is: W - x_flip - w.
+    """
+    if pred_df.empty:
+        return pred_df
+    out = pred_df.copy()
+    out["x_topleft"] = float(image_width) - out["x_topleft"] - out["width"]
+    return out
+
+
+def from_ultralytics_results(
+    results: Iterable,
+    image_id_lookup: dict[str, int],
+    *,
+    override_fnames: list[str] | None = None,
+) -> pd.DataFrame:
     """Convenience: convert Ultralytics YOLO predict() output -> pred_df schema.
 
     Parameters
@@ -552,6 +733,10 @@ def from_ultralytics_results(results: Iterable, image_id_lookup: dict[str, int])
             with open("data/raw/test_dataset.json") as f:
                 test = json.load(f)
             image_id_lookup = {img["file_name"]: img["id"] for img in test["images"]}
+    override_fnames :
+        If set, must align 1:1 with ``results`` (same length / order). Use when
+        ``predict()`` was run on in-memory arrays so ``Result.path`` is not the
+        real test filename.
 
     Returns
     -------
@@ -565,9 +750,18 @@ def from_ultralytics_results(results: Iterable, image_id_lookup: dict[str, int])
     + width/height) which is COCO's bbox convention.
     """
     rows = []
-    for res in results:
-        path = Path(res.path)
-        fname = path.name
+    results_list = list(results)
+    if override_fnames is not None and len(override_fnames) != len(results_list):
+        raise ValueError(
+            f"override_fnames length ({len(override_fnames)}) != "
+            f"len(results) ({len(results_list)})"
+        )
+    for i, res in enumerate(results_list):
+        if override_fnames is not None:
+            fname = override_fnames[i]
+        else:
+            path = Path(res.path)
+            fname = path.name
         if fname not in image_id_lookup:
             raise KeyError(f"Filename {fname} not in image_id_lookup; build lookup from test_dataset.json")
         image_id = image_id_lookup[fname]
@@ -596,7 +790,13 @@ __all__ = [
     "yolo_preds_to_submission_csv",
     "validate_submission",
     "local_score",
+    "local_per_category_ap5095_from_solution",
+    "build_cv_val_solution_dataframe",
+    "val_image_ids_for_fold",
+    "filter_pred_df_by_per_class_conf",
+    "load_per_class_conf_thresholds",
     "from_ultralytics_results",
+    "unmirror_horizontal_xywh",
     "SUBMISSION_COLUMNS",
     "PRED_DF_REQUIRED_COLUMNS",
     "VALID_COCO_CAT_IDS",

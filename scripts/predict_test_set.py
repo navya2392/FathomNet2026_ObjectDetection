@@ -47,6 +47,15 @@ Usage
         --out /workspace/submissions/p2_full.csv \
         --test-images /workspace/data/raw/images/test \
         --test-json /workspace/data/raw/test_dataset.json
+
+    # Tier 1A: horizontal-flip view (boxes mapped back to original coords)
+    python scripts/predict_test_set.py \
+        --weights weights/runs/.../best.pt \
+        --out submissions/tag_hflip.csv \
+        --imgsz 1024 --hflip
+
+    # Tier 1A smoke: first N images only (sorted filenames — not for real submit)
+    python scripts/predict_test_set.py ... --max-images 50 --no-validate
 """
 from __future__ import annotations
 
@@ -55,7 +64,6 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -100,6 +108,32 @@ def parse_args() -> argparse.Namespace:
                    help="Skip validate_submission() pre-flight check (NOT recommended)")
     p.add_argument("--quiet-ultralytics", action="store_true",
                    help="Reduce Ultralytics chatter (verbose=False)")
+    p.add_argument("--hflip", action="store_true",
+                   help="Predict on horizontally flipped images and map boxes back "
+                        "to original coordinates (Tier 1A TTA). Uses per-image "
+                        "OpenCV loads; ignores --batch > 1 for variable resolutions.")
+    p.add_argument("--underwater-preproc", action="store_true",
+                   help="Apply underwater preprocessing to each test image before "
+                        "inference (Tier 1F / E4 / E9). Default method is MSRCR; "
+                        "use --underwater-method clahe for the legacy gray-world+CLAHE "
+                        "pipeline. Forces per-image loading via OpenCV. Must also "
+                        "be applied at training time for consistent train/test distribution.")
+    p.add_argument("--underwater-method", choices=["msrcr", "clahe"], default="msrcr",
+                   help="Underwater preproc method when --underwater-preproc is set. "
+                        "msrcr (default) — Multi-Scale Retinex w/ Color Restoration, "
+                        "evidenced superior in Springer 2024 underwater detection lit. "
+                        "clahe — original gray-world + CLAHE pipeline (E4 anchor).")
+    p.add_argument("--max-images", type=int, default=None,
+                   metavar="N",
+                   help="Only the first N test images (sorted by basename). "
+                        "Tier 1A smoke / debug — omit for full test-set CSV.")
+    p.add_argument(
+        "--per-class-conf-json",
+        type=Path,
+        default=None,
+        help="Tier 1C-i: JSON from scripts/tune_per_class_conf.py — filter detections "
+             "by per-COCO-category score thresholds before CSV export.",
+    )
     return p.parse_args()
 
 
@@ -132,6 +166,9 @@ def main() -> int:
     if not args.test_json.exists():
         print(f"ERROR: test JSON not found: {args.test_json}", file=sys.stderr)
         return 2
+    if args.max_images is not None and args.max_images < 1:
+        print("ERROR: --max-images must be >= 1", file=sys.stderr)
+        return 2
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -148,9 +185,20 @@ def main() -> int:
     print(f"  iou:         {args.iou}")
     print(f"  max_det:     {args.max_det}")
     print(f"  TTA:         {args.tta}")
+    print(f"  HFlip infer: {args.hflip}")
+    mi = args.max_images
+    print(f"  Max images:  {mi if mi is not None else 'all'}")
     print(f"  Half:        {args.half}")
     print(f"  Device:      {args.device or 'auto'}")
+    conf_json = args.per_class_conf_json
+    print(f"  Per-class τ: {conf_json if conf_json is not None else 'off'}")
+    print(f"  UW preproc:  {args.underwater_preproc}")
     print()
+
+    if conf_json is not None:
+        if not conf_json.exists():
+            print(f"ERROR: --per-class-conf-json not found: {conf_json}", file=sys.stderr)
+            return 2
 
     print("[1/4] Building image_id_lookup from test_dataset.json ...")
     lookup = _build_image_id_lookup(args.test_json)
@@ -161,10 +209,9 @@ def main() -> int:
 
     model = YOLO(str(args.weights))
 
-    predict_kwargs = dict(
-        source=str(args.test_images),
+    predict_kwargs_base = dict(
         imgsz=args.imgsz,
-        batch=args.batch,
+        batch=max(1, args.batch),
         conf=args.conf,
         iou=args.iou,
         max_det=args.max_det,
@@ -182,24 +229,124 @@ def main() -> int:
     pred_count_per_img: list[int] = []
     image_count = 0
     from src.submit import (
+        filter_pred_df_by_per_class_conf,
         from_ultralytics_results,
+        load_per_class_conf_thresholds,
+        unmirror_horizontal_xywh,
         yolo_preds_to_submission_csv,
         validate_submission,
     )
     import pandas as pd
 
+    from src.inference_paths import capped_sorted_test_paths
+
+    need_explicit_paths = args.hflip or args.underwater_preproc or args.max_images is not None
+    paths_explicit: list[Path] | None = None
+    if need_explicit_paths:
+        paths_explicit = capped_sorted_test_paths(args.test_images, args.max_images)
+        if not paths_explicit:
+            print(f"ERROR: no images found in {args.test_images}", file=sys.stderr)
+            return 2
+        if args.max_images is not None:
+            print(f"      [note] --max-images={args.max_images} subset ({len(paths_explicit)} paths)")
+
+    uw_preproc_fn = None
+    if args.underwater_preproc:
+        if args.underwater_method == "msrcr":
+            from src.underwater_preproc import underwater_preprocess_msrcr
+            uw_preproc_fn = underwater_preprocess_msrcr
+            print("      [note] --underwater-preproc enabled: MSRCR per image (Springer 2024)")
+        else:
+            from src.underwater_preproc import underwater_preprocess
+            uw_preproc_fn = underwater_preprocess
+            print("      [note] --underwater-preproc enabled: gray-world + CLAHE per image")
+
     rows_accum = []
-    for res in model.predict(**predict_kwargs):
-        image_count += 1
-        n_dets = 0 if res.boxes is None else len(res.boxes)
-        pred_count_per_img.append(n_dets)
-        if image_count % 100 == 0:
-            elapsed = time.time() - t_start
-            ips = image_count / max(elapsed, 1e-6)
-            print(f"      ... {image_count:,} images processed ({ips:.1f} img/s)")
-        df_one = from_ultralytics_results([res], lookup)
-        if not df_one.empty:
-            rows_accum.append(df_one)
+    if args.hflip or (args.underwater_preproc and not args.hflip):
+        try:
+            import cv2
+        except ImportError:
+            print("ERROR: --hflip/--underwater-preproc requires OpenCV "
+                  "(pip install opencv-python).", file=sys.stderr)
+            return 2
+        assert paths_explicit is not None
+        paths = paths_explicit
+        eff_batch = 1
+        if args.batch > 1:
+            print(f"      [note] per-image loading (batch=1, {len(paths):,} images); "
+                  f"--batch {args.batch} ignored.")
+        predict_kwargs_perimg = dict(
+            predict_kwargs_base,
+            batch=eff_batch,
+            stream=True,
+        )
+        for img_path in paths:
+            bgr = cv2.imread(str(img_path))
+            if bgr is None:
+                print(f"ERROR: cv2.imread failed for {img_path}", file=sys.stderr)
+                return 2
+            source = bgr
+            if uw_preproc_fn is not None:
+                source = uw_preproc_fn(source)
+            if args.hflip:
+                source = cv2.flip(source, 1)
+            try:
+                res = next(iter(model.predict(source=source, **predict_kwargs_perimg)))
+            except StopIteration:
+                print(f"ERROR: predict returned no results for {img_path}",
+                      file=sys.stderr)
+                return 2
+            image_count += 1
+            n_dets = 0 if res.boxes is None else len(res.boxes)
+            pred_count_per_img.append(n_dets)
+            if image_count % 100 == 0:
+                elapsed = time.time() - t_start
+                ips = image_count / max(elapsed, 1e-6)
+                print(f"      ... {image_count:,} images processed ({ips:.1f} img/s)")
+            df_one = from_ultralytics_results(
+                [res], lookup, override_fnames=[img_path.name])
+            if args.hflip:
+                shape = getattr(res, "orig_shape", None)
+                if shape is None or len(shape) < 2:
+                    print(f"ERROR: invalid orig_shape for {img_path}: {shape!r}",
+                          file=sys.stderr)
+                    return 2
+                ow = float(shape[1])
+                df_one = unmirror_horizontal_xywh(df_one, ow)
+            if not df_one.empty:
+                rows_accum.append(df_one)
+    elif paths_explicit is not None:
+        predict_kwargs = dict(
+            predict_kwargs_base,
+            source=[str(p) for p in paths_explicit],
+        )
+        for res in model.predict(**predict_kwargs):
+            image_count += 1
+            n_dets = 0 if res.boxes is None else len(res.boxes)
+            pred_count_per_img.append(n_dets)
+            if image_count % 100 == 0:
+                elapsed = time.time() - t_start
+                ips = image_count / max(elapsed, 1e-6)
+                print(f"      ... {image_count:,} images processed ({ips:.1f} img/s)")
+            df_one = from_ultralytics_results([res], lookup)
+            if not df_one.empty:
+                rows_accum.append(df_one)
+    else:
+        predict_kwargs = dict(
+            predict_kwargs_base,
+            source=str(args.test_images),
+        )
+        for res in model.predict(**predict_kwargs):
+            image_count += 1
+            n_dets = 0 if res.boxes is None else len(res.boxes)
+            pred_count_per_img.append(n_dets)
+            if image_count % 100 == 0:
+                elapsed = time.time() - t_start
+                ips = image_count / max(elapsed, 1e-6)
+                print(f"      ... {image_count:,} images processed ({ips:.1f} img/s)")
+            df_one = from_ultralytics_results([res], lookup)
+            if not df_one.empty:
+                rows_accum.append(df_one)
 
     elapsed = time.time() - t_start
     print(f"      DONE: {image_count:,} images in {elapsed/60:.1f} min "
@@ -220,7 +367,26 @@ def main() -> int:
               file=sys.stderr)
         return 3
     pred_df = pd.concat(rows_accum, ignore_index=True)
-    print(f"      Total detection rows: {len(pred_df):,}")
+    print(f"      Total detection rows (pre threshold filter): {len(pred_df):,}")
+
+    if args.per_class_conf_json is not None:
+        thr_map, default_thr = load_per_class_conf_thresholds(args.per_class_conf_json)
+        if args.conf != default_thr:
+            print(
+                f"      [note] CLI --conf={args.conf} differs from JSON default_conf={default_thr}; "
+                "per-class filter uses JSON defaults for missing keys.",
+                flush=True,
+            )
+        pred_df = filter_pred_df_by_per_class_conf(
+            pred_df, thr_map, default_threshold=default_thr
+        )
+        print(f"      Rows after per-class conf filter: {len(pred_df):,}")
+        if pred_df.empty:
+            print(
+                "\nERROR: every detection was removed by per-class thresholds.",
+                file=sys.stderr,
+            )
+            return 3
 
     print(f"[3/4] Writing CSV to {args.out} ...")
     out_path = yolo_preds_to_submission_csv(pred_df, args.out)
@@ -237,7 +403,9 @@ def main() -> int:
             test_json_path=args.test_json,
             warn_callback=lambda msg: warnings.append(msg),
         )
-        print(f"      [PASS] {report.get('n_rows', '?'):,} rows validated.")
+        n_rows = report.get('n_rows')
+        n_rows_str = f"{n_rows:,}" if isinstance(n_rows, int) else "?"
+        print(f"      [PASS] {n_rows_str} rows validated.")
         if warnings:
             print(f"      [warnings: {len(warnings)}]")
             for w in warnings[:5]:
@@ -246,6 +414,10 @@ def main() -> int:
                 print(f"        ... and {len(warnings)-5} more")
 
     print()
+    if args.max_images is not None:
+        print("[warn] Partial inference (--max-images): CSV is NOT the full test set; "
+              "do not submit to Kaggle unless intentional.")
+        print()
     print("=" * 72)
     print("READY FOR KAGGLE UPLOAD")
     print("=" * 72)

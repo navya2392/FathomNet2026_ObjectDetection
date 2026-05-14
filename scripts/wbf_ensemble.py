@@ -73,12 +73,30 @@ from src.submit import validate_submission
 
 
 def _load_submission_csv(path: Path) -> pd.DataFrame:
-    """Read an 8-column submission CSV and validate the columns."""
+    """Read an 8-column submission CSV and validate the columns.
+
+    Accepts EITHER schema:
+      * Internal: annotation_id, image_id, category_id, x_min, y_min, w, h, score
+      * Kaggle:   annotation_id, image_id, category_id, bbox_x, bbox_y, bbox_width, bbox_height, score
+                  (or without annotation_id, in which case it's synthesized)
+    Returns the internal schema (renamed) for downstream code.
+    """
     df = pd.read_csv(path)
+    rename_map = {
+        "bbox_x": "x_min",
+        "bbox_y": "y_min",
+        "bbox_width": "w",
+        "bbox_height": "h",
+    }
+    df = df.rename(columns=rename_map)
+    if "annotation_id" not in df.columns:
+        df = df.copy()
+        df["annotation_id"] = range(1, len(df) + 1)
     required = ["annotation_id", "image_id", "category_id", "x_min", "y_min", "w", "h", "score"]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"{path}: missing columns {missing}")
+        raise ValueError(f"{path}: missing columns {missing} (after rename); "
+                         f"present: {list(df.columns)}")
     return df[required].copy()
 
 
@@ -306,8 +324,30 @@ def main(argv: Optional[list[str]] = None) -> int:
         conf_type=args.conf_type,
         verbose=True,
     )
-    fused.to_csv(args.out, index=False)
-    print(f"\nWrote {len(fused):,} fused predictions to {args.out}")
+
+    # Convert internal schema -> Kaggle schema for the saved CSV so that
+    # downstream submission tools (and Kaggle's grader) can ingest it
+    # without further renaming. Also filter degenerate boxes (same defense
+    # as src.submit.yolo_preds_to_submission_csv) since WBF can produce
+    # zero-area clusters when the pre-fusion conf is very low.
+    fused_kaggle = fused.rename(columns={
+        "x_min": "bbox_x",
+        "y_min": "bbox_y",
+        "w": "bbox_width",
+        "h": "bbox_height",
+    })
+    n_before = len(fused_kaggle)
+    fused_kaggle = fused_kaggle[
+        (fused_kaggle["bbox_width"] > 0) & (fused_kaggle["bbox_height"] > 0)
+    ].copy()
+    n_dropped = n_before - len(fused_kaggle)
+    if n_dropped > 0:
+        print(f"[wbf_ensemble] dropped {n_dropped} degenerate fused boxes "
+              f"(width<=0 or height<=0) of {n_before} total "
+              f"({100 * n_dropped / max(n_before, 1):.3f}%)")
+
+    fused_kaggle.to_csv(args.out, index=False)
+    print(f"\nWrote {len(fused_kaggle):,} fused predictions to {args.out}")
 
     if not args.no_validate:
         try:

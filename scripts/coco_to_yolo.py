@@ -105,12 +105,25 @@ def main() -> int:
     # Group annotations by image_id (single linear pass).
     anns_by_image: dict[int, list[dict]] = {img_id: [] for img_id in image_index}
     unknown_cat_ids: Counter = Counter()
+    orphan_image_anns = 0
     for ann in coco["annotations"]:
         cat_id = int(ann["category_id"])
         if cat_id not in cat_id_to_idx:
             unknown_cat_ids[cat_id] += 1
             continue
-        anns_by_image.setdefault(int(ann["image_id"]), []).append(ann)
+        iid = int(ann["image_id"])
+        if iid not in image_index:
+            orphan_image_anns += 1
+            continue
+        anns_by_image[iid].append(ann)
+
+    if orphan_image_anns:
+        print(
+            f"FATAL: {orphan_image_anns:,} annotations reference image_id "
+            f"values not listed in coco['images'] (orphans). Fix train_dataset.json.",
+            file=sys.stderr,
+        )
+        return 3
 
     if unknown_cat_ids:
         print(

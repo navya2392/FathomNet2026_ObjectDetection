@@ -1,15 +1,15 @@
 # Large data - never commit (per Competition Rule 4: no redistribution)
-data/raw/
-data/processed/
-data/labels/
-data/folds/
-data/backup/
+data/*
+!data/README.md
 
-# Model weights - too large for git, store on RunPod / GitHub Releases
-weights/
+# Model weights - too large for git, downloaded per weights/README.md
+weights/*
+!weights/README.md
 *.pt
 *.pth
 *.onnx
+*.safetensors
+*.bin
 
 # Archive files
 *.zip
@@ -32,6 +32,10 @@ wandb/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
+
+# Local automation markers / agent harness
+.local_pod_watch/
+.claude/
 
 # Training runs (Ultralytics writes results here by default)
 runs/

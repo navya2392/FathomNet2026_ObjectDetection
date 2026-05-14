@@ -25,7 +25,11 @@ from src.submit import (
     SUBMISSION_COLUMNS,
     VALID_COCO_CAT_IDS,
     ValidationError,
+    filter_pred_df_by_per_class_conf,
+    from_ultralytics_results,
+    load_per_class_conf_thresholds,
     local_score,
+    unmirror_horizontal_xywh,
     validate_submission,
     yolo_preds_to_submission_csv,
 )
@@ -61,6 +65,52 @@ def _write_csv(df: pd.DataFrame, tmp_path: Path) -> Path:
     out = tmp_path / "submission.csv"
     df.to_csv(out, index=False)
     return out
+
+
+class TestUnmirrorHorizontalXYWH:
+    def test_round_trip_identity(self):
+        w_img = 1920.0
+        df = pd.DataFrame(
+            {
+                "image_id": [1],
+                "class_idx": [0],
+                "x_topleft": [100.0],
+                "y_topleft": [50.0],
+                "width": [80.0],
+                "height": [60.0],
+                "score": [0.9],
+            }
+        )
+        flipped = unmirror_horizontal_xywh(df.copy(), w_img)
+        back = unmirror_horizontal_xywh(flipped.copy(), w_img)
+        pd.testing.assert_frame_equal(df, back)
+
+    def test_known_flip_coordinates(self):
+        """Box at x=[70,90] in original (W=100): mirrored top-left x=10, w=20."""
+        df = pd.DataFrame(
+            {
+                "image_id": [1],
+                "class_idx": [0],
+                "x_topleft": [10.0],
+                "y_topleft": [5.0],
+                "width": [20.0],
+                "height": [10.0],
+                "score": [0.5],
+            }
+        )
+        out = unmirror_horizontal_xywh(df, 100.0)
+        assert float(out["x_topleft"].iloc[0]) == pytest.approx(70.0)
+        assert float(out["y_topleft"].iloc[0]) == pytest.approx(5.0)
+
+    def test_empty_frame(self):
+        empty = pd.DataFrame(columns=PRED_DF_REQUIRED_COLUMNS)
+        assert unmirror_horizontal_xywh(empty, 640.0).empty
+
+
+class TestFromUltralyticsResultsOverride:
+    def test_override_fname_length_mismatch_raises(self):
+        with pytest.raises(ValueError, match="override_fnames length"):
+            from_ultralytics_results([], {"a.jpg": 1}, override_fnames=["a.jpg"])
 
 
 class TestYoloPredsToSubmissionCsv:
@@ -268,10 +318,48 @@ class TestValidateSubmission:
         assert 999_999_999 in result["image_ids_not_in_test"]
 
 
+class TestPerClassConfHelpers:
+    def test_filter_keeps_above_threshold_per_cat(self):
+        df = pd.DataFrame(
+            {
+                "image_id": [1, 1, 2],
+                "class_idx": [0, 11, 31],
+                "x_topleft": [1.0, 2.0, 3.0],
+                "y_topleft": [1.0, 2.0, 3.0],
+                "width": [10.0, 10.0, 10.0],
+                "height": [10.0, 10.0, 10.0],
+                "score": [0.5, 0.02, 0.05],
+            }
+        )
+        thr = {1: 0.1, 13: 0.01, 41: 0.1}
+        out = filter_pred_df_by_per_class_conf(df, thr, default_threshold=0.001)
+        assert len(out) == 2
+        assert set(out["class_idx"].tolist()) == {0, 11}
+
+    def test_load_json_cat_overrides_idx_when_both_present(self, tmp_path: Path):
+        import json
+
+        from configs.cat_id_mapping import idx_to_cat_id
+
+        idx_list = [0.5] * len(idx_to_cat_id)
+        payload = {
+            "default_conf": 0.001,
+            "thresholds_by_class_idx": idx_list,
+            "thresholds_by_cat_id": {str(idx_to_cat_id[0]): 0.05},
+        }
+        p = tmp_path / "full.json"
+        p.write_text(json.dumps(payload), encoding="utf-8")
+        by_cat, def_thr = load_per_class_conf_thresholds(p)
+        assert def_thr == 0.001
+        assert by_cat[int(idx_to_cat_id[0])] == 0.05
+        assert by_cat[int(idx_to_cat_id[1])] == 0.5
+
+
 class TestLocalScore:
     """End-to-end sanity check: feeding ground truth as predictions yields mAP=1.0."""
 
     def test_perfect_predictions_score_one(self):
+        pytest.importorskip("pycocotools")
         if not (CV_FOLDS_PKL.exists() and TRAIN_JSON.exists()):
             pytest.skip("cv_folds.pkl or train_dataset.json missing")
 
@@ -304,6 +392,7 @@ class TestLocalScore:
         assert score > 0.99, f"Perfect predictions scored {score:.4f}, expected > 0.99"
 
     def test_empty_predictions_score_zero(self):
+        pytest.importorskip("pycocotools")
         if not (CV_FOLDS_PKL.exists() and TRAIN_JSON.exists()):
             pytest.skip("cv_folds.pkl or train_dataset.json missing")
         empty_df = pd.DataFrame(columns=PRED_DF_REQUIRED_COLUMNS)

@@ -232,6 +232,100 @@ def underwater_preprocess(
     return out
 
 
+def _single_scale_retinex(img: np.ndarray, sigma: float) -> np.ndarray:
+    """Single-scale retinex: log(I) - log(GaussianBlur(I, sigma)).
+
+    Operates on float32 in [eps, +inf). Channels handled independently.
+    """
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("OpenCV required for MSRCR.") from exc
+    eps = 1.0
+    blurred = cv2.GaussianBlur(img, (0, 0), sigma)
+    return np.log(img + eps) - np.log(blurred + eps)
+
+
+def msrcr(
+    img: np.ndarray,
+    *,
+    sigmas: tuple[float, ...] = (15.0, 80.0, 250.0),
+    G: float = 5.0,
+    b: float = 25.0,
+    alpha: float = 125.0,
+    beta: float = 46.0,
+    low_clip: float = 0.01,
+    high_clip: float = 0.99,
+) -> np.ndarray:
+    """Multi-Scale Retinex with Color Restoration (MSRCR).
+
+    Reference: Jobson et al., "A Multiscale Retinex for Bridging the Gap
+    Between Color Images and the Human Observation of Scenes," IEEE TIP 1997.
+
+    Springer 2024 (data-centric underwater detection framework) found MSRCR
+    consistently beat CLAHE+gray-world by 3.2-13.4 mAP across underwater
+    domain-shift settings — that's why we prefer it over CLAHE for E9.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        Shape (H, W, 3), dtype uint8 (BGR or RGB).
+    sigmas : tuple of float
+        Three Gaussian scales (small=local detail, large=global illumination).
+        Defaults are the classic MSRCR triple (15, 80, 250).
+    G, b : float
+        Gain and bias applied after color restoration.
+    alpha, beta : float
+        Color restoration weights (Jobson defaults).
+    low_clip, high_clip : float
+        Output histogram clip percentiles for final dynamic-range stretch.
+
+    Returns
+    -------
+    np.ndarray
+        Same shape and dtype (uint8) as input.
+    """
+    if img.ndim != 3 or img.shape[2] != 3 or img.dtype != np.uint8:
+        raise ValueError(f"img must be HxWx3 uint8, got shape={img.shape} dtype={img.dtype}")
+    img_f = img.astype(np.float32) + 1.0
+
+    msr = np.zeros_like(img_f)
+    weight = 1.0 / len(sigmas)
+    for sigma in sigmas:
+        msr += weight * _single_scale_retinex(img_f, sigma)
+
+    img_sum = np.sum(img_f, axis=2, keepdims=True)
+    color_restoration = beta * (np.log10(alpha * img_f) - np.log10(img_sum))
+
+    msrcr_img = G * (msr * color_restoration + b)
+
+    out = np.zeros_like(msrcr_img)
+    for c in range(3):
+        ch = msrcr_img[:, :, c]
+        lo = np.percentile(ch, low_clip * 100.0)
+        hi = np.percentile(ch, high_clip * 100.0)
+        if hi - lo < 1e-6:
+            out[:, :, c] = 0
+        else:
+            out[:, :, c] = np.clip((ch - lo) / (hi - lo), 0.0, 1.0) * 255.0
+
+    return out.astype(np.uint8)
+
+
+def underwater_preprocess_msrcr(
+    img: np.ndarray,
+    *,
+    sigmas: tuple[float, ...] = (15.0, 80.0, 250.0),
+) -> np.ndarray:
+    """Convenience wrapper: MSRCR with default Jobson params.
+
+    This is the recommended preprocessing per Springer 2024 underwater
+    domain-shift literature review. Use in place of `underwater_preprocess`
+    (gray-world + CLAHE) for E9.
+    """
+    return msrcr(img, sigmas=sigmas)
+
+
 def needs_underwater_preproc(
     img: np.ndarray, *, color_cast_threshold: float = 0.15
 ) -> bool:
@@ -272,5 +366,7 @@ __all__ = [
     "gray_world_balance",
     "apply_clahe",
     "underwater_preprocess",
+    "underwater_preprocess_msrcr",
+    "msrcr",
     "needs_underwater_preproc",
 ]
