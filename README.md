@@ -1,6 +1,6 @@
 # FathomNet 2026 — Marine Species Detection
 
-**Finished 14th on the public leaderboard** of the FathomNet 2026 / CLEF 2026 underwater object detection competition (mAP@[.50:.95] = 0.1143).
+**Finished 16th on the public leaderboard** of the FathomNet 2026 / CLEF 2026 underwater object detection competition (mAP@[.50:.95] = 0.1143).
 
 ![Train vs Test contact sheet](figures/train_vs_test_contact_sheet.jpg)
 
@@ -17,7 +17,7 @@
 
 | Metric | Value | Notes |
 |---|---|---|
-| **Public leaderboard rank** | **14th** | FathomNet 2026 / CLEF 2026 |
+| **Public leaderboard rank** | **16th** | FathomNet 2026 / CLEF 2026 |
 | **Best LB** | **0.1143 mAP@[.50:.95]** | Final composite pipeline |
 | Best pure detector | 0.0917 | YOLOv8x + RT-DETR-l cross-architecture ensemble |
 | Single-model anchor | 0.0863 | YOLOv8x with high-res training + multi-scale TTA |
