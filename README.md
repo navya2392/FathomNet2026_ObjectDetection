@@ -1,137 +1,123 @@
 # FathomNet 2026 — Marine Species Detection
 
-**Finished 16th on the public leaderboard** of the FathomNet 2026 / CLEF 2026 underwater object detection competition (mAP@[.50:.95] = 0.1143).
+**16th on the public leaderboard** of the FathomNet 2026 / CLEF 2026 underwater object detection competition (0.0922 mAP@[.50:.95]).
 
 ![Train vs Test contact sheet](figures/train_vs_test_contact_sheet.jpg)
 
-*Train (left): NOAA + SOI ROV imagery. Test (right): MBARI VARS framegrabs. Different research institutions, different ROVs, different oceans, different decades.*
+*Train (left): NOAA + SOI ROV imagery. Test (right): MBARI VARS framegrabs — different institutions, ROVs, oceans, and decades.*
 
 ## TL;DR
 
-- The competition's central trick is that **train and test come from completely different research institutions**. The training set is NOAA + SOI imagery; the test set is 100% MBARI footage from different submarines, oceans, and decades. The detector you train has never seen anything like the test set.
-- Anything that made the model "fit the training data better" — fancier loss functions, sampling tricks, pseudo-labels, underwater color correction — **hurt the leaderboard**.
-- Things that worked were all **architecture- and domain-agnostic**: bigger input resolution, multi-scale test-time inference, ensembling two different architectures.
-- The biggest single win came *after* training was done: re-classifying each detected box using a foundation-model classifier that only kicks in when two independent voters agree. That alone added +0.0226 to the score with no retraining.
+- **The whole competition is a domain-shift problem.** Train is NOAA + SOI imagery; test is 100% MBARI footage from different subs, oceans, and decades. Your detector has never seen anything like the test set.
+- **Making the model "fit better" hurt.** Fancier losses, sampling tricks, pseudo-labels, color correction — all cost leaderboard points.
+- **What helped was domain-agnostic:** bigger input resolution, multi-scale test-time inference, and ensembling two architectures.
+- **A cautionary tale:** a foundation-model relabeling step looked worth +0.0226 on my offline estimate but did nothing on the real leaderboard. Trust the held-out board, not partial-data estimates.
 
-## Headline numbers
+## Results
 
 | Metric | Value | Notes |
 |---|---|---|
 | **Public leaderboard rank** | **16th** | FathomNet 2026 / CLEF 2026 |
-| **Best LB** | **0.1143 mAP@[.50:.95]** | Final composite pipeline |
-| Best pure detector | 0.0917 | YOLOv8x + RT-DETR-l cross-architecture ensemble |
-| Single-model anchor | 0.0863 | YOLOv8x with high-res training + multi-scale TTA |
+| **Best leaderboard score** | **0.0922** mAP@[.50:.95] | Best scored submission |
+| Best pure detector | 0.0917 | YOLOv8x + RT-DETR-l ensemble |
+| Single-model anchor | 0.0863 | YOLOv8x, high-res + multi-scale TTA |
+| Private offline estimate | 0.1143 | Composite pipeline on partial data — *did not* hold up on the LB |
 | Submissions scored | 28 | 17 during training, 11 post-submission |
 
 ## The problem
 
-32 classes of deep-sea marine species, ~6,500 training images, ~1,400 test images. The catch:
+32 deep-sea species, ~6,500 training images, ~1,400 test images. The catch is where those images come from:
 
-- **Train = 100% NOAA and SOI imagery** — ROVs and cameras from two specific oceanographic institutions.
-- **Test = 100% MBARI VARS framegrabs** — a completely different institution, different ROVs, different oceans, different decades, different camera resolutions.
-- Most damning: 14% of the test images are 720×486 — a resolution that does not appear *anywhere* in the training set.
+- **Train:** 100% NOAA + SOI — ROVs and cameras from two oceanographic institutions.
+- **Test:** 100% MBARI VARS framegrabs — a different institution, different gear, different oceans and decades.
+- 14% of test images are 720×486, a resolution that appears **nowhere** in training.
 
-This means a model can be near-perfect on a held-out slice of the training data and still fail catastrophically on the test set. We saw this directly — validation mAP was around 0.43, leaderboard mAP was around 0.09. **The 8× gap isn't overfitting; it's domain shift.**
+So a model can look near-perfect on held-out training data and still fail on the test set. I saw exactly that: **validation mAP ~0.43, leaderboard mAP ~0.09.** That 8× gap isn't overfitting — it's domain shift.
 
 ![Sample test images](figures/sample_test_images.png)
 
-*Sample test images. Different lighting, different equipment, lower resolution, different class distributions from the training set.*
+*Test images: different lighting, gear, resolution, and class mix from training.*
 
-## How we approached it
+## How I approached it — three phases
 
-The thinking evolved in three phases.
+### Phase 1 — The obvious things (→ 0.0917)
 
-### Phase 1 — Try the obvious things
+A solid YOLO model, a good pretrained backbone, multi-scale inference, and an ensemble. Three reliable wins:
 
-Train a decent YOLO model, pick a sensible pretrained backbone, run inference at multiple scales, ensemble with another architecture. This got us to **0.0917** — a respectable result built from three reliable techniques:
+- **Higher resolution.** imgsz 640 → 1024: **+0.0137**.
+- **Multi-scale test-time inference.** Six scales merged with Weighted Boxes Fusion: **+0.0228** cumulative.
+- **Cross-architecture ensemble.** YOLOv8x + RT-DETR-l. RT-DETR-l alone was *worse*, but its errors differed enough to add **+0.0054**.
 
-- **Higher input resolution.** Going from imgsz=640 to 1024 added +0.0137 by itself, because higher-resolution training gives the model more flexibility about which image scales it can handle at test time.
-- **Multi-scale test-time inference.** Running the detector at six different image scales and merging the predictions with Weighted Boxes Fusion. Added +0.0228 cumulatively.
-- **Cross-architecture ensemble.** Fusing predictions from YOLOv8x and RT-DETR-l (a transformer-based detector). RT-DETR-l alone scored *worse* than YOLOv8x, but their errors disagreed enough that combining them lifted the score by another +0.0054.
+The single biggest lever was the **MBARI 315k** pretrained checkpoint (trained on related marine imagery), which beat COCO/ImageNet baselines by **+0.078 mAP**.
 
-We also tried five different pretrained initializations. The **MBARI 315k** checkpoint (a model pretrained on related marine imagery) beat the COCO and ImageNet baselines by a wide margin — that one decision was worth +0.078 mAP, the largest single jump in the whole project.
+### Phase 2 — The "improve the model" tricks all backfired
 
-### Phase 2 — Realize the "make the model better" tricks all hurt
+I tried the standard toolkit for **long-tail** (1000× class imbalance) and **domain shift**:
 
-This was the most important and counterintuitive finding. We tried a long list of techniques designed for **long-tail class distributions** (a 1000× imbalance across 32 classes) and **domain shift**:
+- Rare-class losses (positive-unlabeled, equalized focal, frequency-weighted)
+- Oversampling rare classes
+- Class-aware copy-paste augmentation
+- Pseudo-labeling on confident test predictions
+- BatchNorm statistic adaptation
+- Underwater color correction at inference
 
-- Loss functions tuned for rare classes (positive-unlabeled loss, equalized focal variants, frequency-weighted losses)
-- Sampling strategies that oversample rare classes
-- Augmentation tricks (class-aware copy-paste)
-- Pseudo-labeling — train on the model's own confident predictions on the test set
-- BatchNorm running-statistic adaptation
-- Underwater color correction at inference time
+**Every one hurt the leaderboard** — by 1–2 points each. The reason, once it clicked:
 
-**Every one of them hurt the leaderboard.** Not by a little — by 1–2 percentage points each.
+> Every losing technique makes the model fit the **training** distribution more tightly. Pseudo-labeling trusts predictions from a model that's never seen MBARI. Loss reweighting and sampling help rare classes *within* training, not across the institutional gap.
 
-The pattern took a while to see, but once it clicked, the project pivoted:
+Three independent attacks on class imbalance (losses, sampling, augmentation) all hurt. **Class imbalance wasn't the bottleneck — domain shift was.**
 
-> Every losing technique makes the model fit the **source** (training) distribution more tightly. Pseudo-labeling teaches the model to trust its own predictions on test images — but those predictions came from a model that has never seen MBARI footage. Loss reweighting helps rare classes within the training set, not across the institutional gap. Sampling and augmentation make the same mistake.
+### Phase 3 — Optimize the predictions, not the model
 
-We tested this directly: three mechanistically independent attacks on class imbalance (loss reweighting, sampling, augmentation) all hurt. **Class imbalance wasn't the bottleneck. Domain shift was.**
+With no training-time fix left, I moved to post-processing on the detector's outputs. *The per-step gains below are from a private offline estimate on partial data — see the reality check at the end.*
 
-### Phase 3 — Stop training, start optimizing the predictions
+**1. Two-classifier consensus relabeling** *(offline: +0.0174)*
+For each detected box, crop it and run two independent classifiers: a DINOv2 nearest-neighbor lookup against training crops, and a 32-way classifier on the same DINOv2 features. Relabel only when **both** agree the class is wrong. ~3,000 of ~290,000 boxes changed.
+*Why it should have worked:* DINOv2 sees MBARI imagery through a broader lens than a NOAA-trained YOLO, so two genuinely different voters can filter mistakes instead of compounding them.
 
-Once it was clear that no training-time intervention would help, we pivoted to **post-submission optimization** — operations that work on the detector's predictions, not on the detector itself. Three composable ideas, applied in order:
+**2. Weighted Boxes Fusion stacking** *(offline: +0.0043)*
+Merge two more relabel variants (fine-tuned DINOv2; MLP-only at a higher threshold) with the detector ensemble, weighted winner-heavy.
 
-**1. Two-classifier consensus relabeling — +0.0174**
+**3. Letterbox-border noise filter** *(offline: +0.0002)*
+The 720×486 images are letterboxed in black bars full of low-confidence false positives. Dropping boxes whose interior mean RGB < 15 removed ~7,000, all scoring < 0.10.
 
-For every detected box on the test set, crop the region and run *two independent classifiers* on the crop:
+**Reality check.** Offline, this composite pipeline hit **0.1143** (+0.0226 over the pure detector). On the **real leaderboard the gain all but vanished** — the best submission was **0.0922**, barely above the 0.0917 pure detector. Lesson: a partial-data estimate can badly overpromise; only the held-out board tells the truth.
 
-- A nearest-neighbor lookup in DINOv2 (a general-purpose vision foundation model) feature space against labeled training crops.
-- A 32-way classifier trained on the same DINOv2 features.
+## What didn't work
 
-If both classifiers unanimously agree that the detector predicted the wrong class, we replace the label. Otherwise we leave it alone. About 3,000 of ~290,000 predictions got relabeled.
-
-**Why this worked when YOLO-on-YOLO pseudo-labeling didn't:** DINOv2 was pretrained on a much broader image distribution than any YOLO checkpoint. It "sees" MBARI imagery through a different lens than a NOAA-trained YOLO does. Two voters reading from genuinely different feature spaces actually filter mistakes; two voters reading from correlated representations just compound them.
-
-**2. Weighted Boxes Fusion stacking — +0.0043**
-
-Generate two more variants of the relabel (one with a fine-tuned DINOv2, one with the MLP alone at a higher confidence threshold) and WBF-merge them with the detector ensemble. Asymmetric weights — proven winner heavy, variants light — preserved the best result while picking up a small diversity lift.
-
-**3. Letterbox-border noise filter — +0.0002**
-
-The 14% of test images at 720×486 are letterboxed inside black bars. The detector was producing thousands of low-confidence false positives inside those bars. A simple geometric rule (drop predictions where the box's interior mean RGB is below 15) removed ~7,000 of them, all with score < 0.10. Tiny lift, free win.
-
-The composite pipeline (detector ensemble → consensus relabel → WBF stack → border filter) ended at **0.1143 mAP@[.50:.95]**, a **+0.0226 gain over the best pure detector** — entirely from inference-time post-processing.
-
-## What didn't work — at a glance
-
-| Category | What we tried | Why it hurt |
+| Category | Tried | Why it hurt |
 |---|---|---|
-| **Long-tail-aware training** | EQLv2, equalized focal loss, repeat-factor sampling, class-aware copy-paste | Class imbalance isn't the bottleneck — domain shift is |
-| **Pseudo-labeling** | Single-teacher, multi-teacher consensus | Both teachers see test images through the same NOAA-trained lens; they agree about the wrong things |
-| **Inference-time domain tricks** | BatchNorm running-stat adaptation, underwater CLAHE color correction at inference only | Train/inference mismatch, or simply not enough lever |
-| **Source-side custom losses** | Positive-unlabeled (PU) loss, federated loss | Tightens fit to source domain |
-| **Aggressive post-submission variants** | Crop-only classifier (no detector), full retrained SSL, broad relabeling thresholds, size-based relabel | Same lesson as Phase 2 — conservative + consensus wins, aggressive + greedy loses |
+| Long-tail training | EQLv2, equalized focal loss, repeat-factor sampling, copy-paste | Imbalance isn't the bottleneck; domain shift is |
+| Pseudo-labeling | Single- and multi-teacher | Teachers share the NOAA-trained lens — they agree on the wrong things |
+| Inference-time domain tricks | BatchNorm adaptation, underwater CLAHE | Train/inference mismatch, or too weak a lever |
+| Custom source losses | Positive-unlabeled, federated | Tightens fit to the source domain |
+| Aggressive post-processing | Crop-only classifier, retrained SSL, broad relabel thresholds | Conservative + consensus wins; aggressive + greedy loses |
 
-The full numerics for all 28 scored submissions live in [`notebooks/final_pipeline.ipynb`](notebooks/final_pipeline.ipynb) (scoreboard chart, per-class AP chart, full pipeline diagram).
+Full numbers for all 28 submissions are in [`notebooks/final_pipeline.ipynb`](notebooks/final_pipeline.ipynb).
 
 ## The bigger lesson
 
-**Institutional domain shift is the dominant variable, and the techniques that won were the ones that don't care about it.** Bigger input resolution, multi-scale inference, cross-architecture ensembling, foundation-model consensus relabeling — none of these "know" anything about NOAA vs MBARI. They just work on images, regardless of which institution captured them.
+**Domain shift was the dominant variable, and the winning techniques were the ones that ignore it.** Higher resolution, multi-scale inference, and cross-architecture ensembling don't "know" anything about NOAA vs MBARI — they just work on images. Everything that assumed train and test share a distribution (loss reweighting, sampling, augmentation, pseudo-labeling) backfired. Good techniques in general; wrong assumption for this competition.
 
-The techniques that hurt were the ones that implicitly assume train and test come from the same distribution: loss reweighting, sampling, augmentation, pseudo-labeling. They're not bad techniques in general — they just need an assumption that this competition broke.
+## What I'd do next
 
-## What we'd do next
-
-- **Re-run two blocked experiments**: a domain-adversarial training run (DANN) and a hierarchical-classification auxiliary head — both implemented in `src/` but blocked by a framework regression we ran out of time to patch around.
-- **Add a third ensemble member** under the same consensus-relabel pipeline.
-- **SAHI tile-based inference** at higher resolution for the 720×486 letterboxed images, which are particularly exposed to small-object recall failures.
+- Re-run two blocked experiments — a DANN domain-adversarial run and a hierarchical-classification head (both in `src/`, blocked by a framework regression).
+- Add a third ensemble member under the same relabel pipeline.
+- SAHI tile-based inference for the small 720×486 letterboxed images.
 
 ## Tech stack
 
-PyTorch, Ultralytics YOLO11/YOLOv8, RT-DETR, DINOv2 (ViT-L/14), Weighted Boxes Fusion, MBARI 315k pretrained weights. See `src/` for the supporting modules — losses, samplers, classifiers, and the relabel pipeline.
+PyTorch · Ultralytics YOLO11/YOLOv8 · RT-DETR · DINOv2 (ViT-L/14) · Weighted Boxes Fusion · MBARI 315k weights. Supporting modules (losses, samplers, classifiers, relabel pipeline) live in `src/`.
 
 ## Repository
 
 | Path | What's there |
 |---|---|
-| [`SETUP.md`](SETUP.md) | Install + commands to run training, inference, and the demo notebook |
-| [`notebooks/final_pipeline.ipynb`](notebooks/final_pipeline.ipynb) | Full results notebook with the **28-experiment scoreboard chart**, per-class AP chart, and pipeline diagram — committed with cached outputs, browseable on GitHub |
-| `src/`, `scripts/`, `tests/`, `configs/` | Source modules, training and inference entry points, unit tests, dataset configs |
-| `data/`, `weights/` | Folder placeholders — see each README for download instructions |
+| [`SETUP.md`](SETUP.md) | Install + commands for training, inference, and the notebook |
+| [`notebooks/final_pipeline.ipynb`](notebooks/final_pipeline.ipynb) | Results notebook: scoreboard, per-class AP, pipeline diagram (cached outputs) |
+| `src/`, `scripts/`, `tests/`, `configs/` | Modules, entry points, unit tests, dataset configs |
+| `data/`, `weights/` | Placeholders — see each README for downloads |
 
 ## License
 
-Code under Apache 2.0 (see `LICENSE`). Pretrained weights subject to their upstream licenses (Ultralytics AGPL-3.0, MBARI 315k CC-BY 4.0).
+Code under Apache 2.0 (see `LICENSE`). Pretrained weights follow their upstream licenses (Ultralytics AGPL-3.0, MBARI 315k CC-BY 4.0).
